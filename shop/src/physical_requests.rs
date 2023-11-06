@@ -1,7 +1,7 @@
 use std::thread;
 use std::thread::JoinHandle;
-use std::fs::File;
-use std::io::{BufReader, BufRead};
+use tokio::fs::File;
+use tokio::io::{BufReader,AsyncBufReadExt};
 use std::time::Duration;
 use actix::prelude::*;
 use crate::shop::*;
@@ -10,26 +10,21 @@ use crate::shop::*;
 /// 
 
 #[derive(Debug)]
-enum PhysicalRequestError {
+pub enum PhysicalRequestError {
     FileError(FileError),
     ErrorParsingData
 }
 
-fn simulate_physical_requests(path: String, shop_addr: Addr<Shop>) -> JoinHandle<Result<(), PhysicalRequestError>>{
-    thread::spawn(move || _simulate_physical_requests(path, shop_addr))
-}
-
-fn _simulate_physical_requests(path:String, shop_addr: Addr<Shop>)-> Result<(), PhysicalRequestError>{
-    let orders = File::open(path).map_err(|_| PhysicalRequestError::FileError(FileError::ErrorOpeningFile))?;
+pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>)-> Result<(), PhysicalRequestError>{
+    let orders = File::open(path).await.map_err(|_| PhysicalRequestError::FileError(FileError::ErrorOpeningFile))?;
     let mut reader = BufReader::new(orders);
     loop {
-        match read_request(&mut reader) {
+        match read_request(&mut reader).await {
             Ok(request) => {
                 print!("WIP: Voy a dormir por: {:?}",request.delay);
-                thread::sleep(request.delay);
-                if shop_addr.try_send(request).is_err(){
-                    print!("FAILED");
-                }
+                tokio::time::sleep(request.delay).await;
+                let res = shop_addr.send(request).await;
+                print!("{:?}", res);
             },
             Err(error) => {
                 if let PhysicalRequestError::FileError(FileError::ErrorEof) = error{
@@ -41,18 +36,18 @@ fn _simulate_physical_requests(path:String, shop_addr: Addr<Shop>)-> Result<(), 
     }
 }
 
-fn read_delay(reader: &mut BufReader<File>) -> Result<Duration, PhysicalRequestError> {
-    let delay = read_line(reader).map_err(|file_error| PhysicalRequestError::FileError(file_error))?;
+async fn read_delay(reader: &mut BufReader<File>) -> Result<Duration, PhysicalRequestError> {
+    let delay = read_line(reader).await.map_err(|file_error| PhysicalRequestError::FileError(file_error))?;
     let delay: u32 = delay.parse().map_err(|_| PhysicalRequestError::ErrorParsingData)?;
     Ok(Duration::from_secs(delay as u64))
 }
 
 
-fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), PhysicalRequestError> {
+async fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), PhysicalRequestError> {
     let mut request_products: Vec<u32> = Vec::new();
     let mut request_amounts: Vec<u32> = Vec::new();
 
-    let buf = read_line(reader).map_err(|file_error| PhysicalRequestError::FileError(file_error))?;
+    let buf = read_line(reader).await.map_err(|file_error| PhysicalRequestError::FileError(file_error))?;
     let products: Vec<&str> = buf.split(';').collect();
     
     for product in products{
@@ -65,25 +60,25 @@ fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), Phys
     Ok((request_products,request_amounts))
 }
 
-fn read_request(reader: &mut BufReader<File>) -> Result<PhysicalRequest,PhysicalRequestError>{
+async fn read_request(reader: &mut BufReader<File>) -> Result<PhysicalRequest,PhysicalRequestError>{
     println!("hola");
-    let delay = read_delay(reader)?;
+    let delay = read_delay(reader).await?;
     println!("hola2");
-    let (request_products, request_amounts) = read_order(reader)?;
+    let (request_products, request_amounts) = read_order(reader).await?;
     println!("hola3");
     Ok(PhysicalRequest::new(delay,request_products,request_amounts))
 }
 
 #[derive(Debug)]
-enum FileError{
+pub enum FileError{
     ErrorReadingLine,
     ErrorOpeningFile,
     ErrorEof
 }
 
-fn read_line(reader: &mut BufReader<File>)->Result<String, FileError>{
+async fn read_line(reader: &mut BufReader<File>)->Result<String, FileError>{
     let mut buf = String::new();
-    if reader.read_line(&mut buf).map_err(|_| FileError::ErrorReadingLine)? == 0{
+    if reader.read_line(&mut buf).await.map_err(|_| FileError::ErrorReadingLine)? == 0{
         return Err(FileError::ErrorEof);
     };
     if buf.ends_with('\n'){
@@ -103,13 +98,13 @@ mod test {
         (p1,p2)
     }
 
-    #[test]
-    fn test_1_read_request(){
+    #[tokio::test]
+    async fn test_1_read_request(){
         let path = String::from("test_files/physical_requests_test_1.txt");
-        let file = File::open(path).unwrap();
+        let file = File::open(path).await.unwrap();
         let mut reader = BufReader::new(file);
-        let request1 = read_request(&mut reader).unwrap();
-        let request2 = read_request(&mut reader).unwrap();
+        let request1 = read_request(&mut reader).await.unwrap();
+        let request2 = read_request(&mut reader).await.unwrap();
         let (p1, p2) = get_physical_requests_test_1_requests();
         assert_eq!(request1, p1);
         assert_eq!(request2, p2);

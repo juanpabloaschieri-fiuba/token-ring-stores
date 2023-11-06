@@ -37,7 +37,7 @@ impl Handler<HayZapatillas> for Shop{
     type Result = bool;
 
     fn handle(&mut self, _msg:HayZapatillas , _ctx: &mut Context<Self>) -> Self::Result {
-        println!("Entre al handler y digo que hay zapas en thread: {:?}",thread::current().id());
+        println!("WIP: Entre al handler y digo que hay zapas en thread: {:?}",thread::current().id());
         true
     }
 }
@@ -46,8 +46,8 @@ impl Handler<PhysicalRequest> for Shop{
     type Result = bool;
 
     fn handle(&mut self, _msg:PhysicalRequest , _ctx: &mut Context<Self>) -> Self::Result {
-        println!("Entre al handler de un request con id: {:?}",thread::current().id());
-        println!("La request que llego es: {:?}",_msg);
+        println!("WIP: Entre al handler de un request con id: {:?}",thread::current().id());
+        println!("WIP: La request que llego es: {:?}",_msg);
         //Verify amount of products, 
         //for product in _msg.product_ids{
             
@@ -102,7 +102,7 @@ fn obtain_coordinates(reader: &mut BufReader<File>) -> Result<(i32, i32), ShopEr
 
 impl Shop{
     /// Private constructor for Shop
-    fn new(stock: HashMap<u32, u32>, position: Point) -> Shop{
+    pub fn new(stock: HashMap<u32, u32>, position: Point) -> Shop{
         Shop{stock, position}
     }
     
