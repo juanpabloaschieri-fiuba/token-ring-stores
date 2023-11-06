@@ -24,7 +24,7 @@ pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>)-> Re
                 print!("WIP: Voy a dormir por: {:?}",request.delay);
                 tokio::time::sleep(request.delay).await;
                 let res = shop_addr.send(request).await;
-                print!("{:?}", res);
+                print!("WIP: El resultado fue: {:?}", res);
             },
             Err(error) => {
                 if let PhysicalRequestError::FileError(FileError::ErrorEof) = error{
@@ -109,5 +109,4 @@ mod test {
         assert_eq!(request1, p1);
         assert_eq!(request2, p2);
     }
-    
 }
