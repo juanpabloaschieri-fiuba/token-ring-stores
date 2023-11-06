@@ -2,9 +2,11 @@ use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture};
 use std::{collections::HashMap, thread, time::Duration, fs::File, io::{BufRead, BufReader}};
 use crate::point::*;
 
+// Positions of the coordinates in the header of the file
 const X_POS: usize = 0;
 const Y_POS: usize = 1;
 
+// Positions of the data in the body of the file
 const ID_POS: usize = 1;
 const AMOUNT_POS: usize = 2;
 
@@ -13,20 +15,63 @@ const AMOUNT_POS: usize = 2;
 #[rtype(result = "bool")]
 struct HayZapatillas();
 
+#[derive(Message, Debug,PartialEq)]
+#[rtype(result = "bool")]
+pub struct PhysicalRequest{
+    pub delay: Duration,
+    product_ids: Vec<u32>,
+    product_amount: Vec<u32>,
+}
+
+impl PhysicalRequest{
+    pub fn new(delay: Duration, product_ids: Vec<u32>, product_amount: Vec<u32>)-> PhysicalRequest{
+        PhysicalRequest{delay,product_ids,product_amount}
+    }
+}
+
+impl Actor for Shop{
+    type Context = Context<Self>;
+}
+
+impl Handler<HayZapatillas> for Shop{
+    type Result = bool;
+
+    fn handle(&mut self, _msg:HayZapatillas , _ctx: &mut Context<Self>) -> Self::Result {
+        println!("Entre al handler y digo que hay zapas en thread: {:?}",thread::current().id());
+        true
+    }
+}
+
+impl Handler<PhysicalRequest> for Shop{
+    type Result = bool;
+
+    fn handle(&mut self, _msg:PhysicalRequest , _ctx: &mut Context<Self>) -> Self::Result {
+        println!("Entre al handler de un request con id: {:?}",thread::current().id());
+        println!("La request que llego es: {:?}",_msg);
+        //Verify amount of products, 
+        //for product in _msg.product_ids{
+            
+        //}
+        true
+    }
+}
 
 #[derive(PartialEq, Debug)]
-struct Shop{
+pub struct Shop{
     stock: HashMap<u32, u32>,
     position: Point,
 }
 
 #[derive(Debug)]
-enum ShopError {
+pub enum ShopError {
     ErrorCreatingShop,
     ErrorReadingFile,
     ErrorParsingData,
 }
 
+/// Charges the stock of the shop from the shop stock file. Receives a BufReader with the file
+/// and returns a HashMap with the stock: the keys being the ID of the product and the value being
+/// the quantity of each.
 fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, u32>, ShopError>{
     let mut stock = HashMap::new();
 
@@ -34,7 +79,7 @@ fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, u
         //cargar stock
         let mut line = res_line.map_err(|_| ShopError::ErrorReadingFile)?;
         let vec: Vec<&str> = line.split(',').collect();
-        //line.pop();
+
         let id: u32   = vec[ID_POS].parse().map_err(|_| ShopError::ErrorParsingData)?;
         let amount: u32   = vec[AMOUNT_POS].parse().map_err(|_| ShopError::ErrorParsingData)?;
         stock.insert(id, amount);
@@ -42,6 +87,8 @@ fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, u
     Ok(stock)
 }
 
+/// Obtains the coordinates of the shop from the shop stock file, reading only the header of the file.
+/// Receives a BufReader with the file and returns a tuple with the coordinates.
 fn obtain_coordinates(reader: &mut BufReader<File>) -> Result<(i32, i32), ShopError>{
     let mut buf = String::new();
     reader.read_line(&mut buf).map_err(|_| ShopError::ErrorReadingFile)?;
@@ -54,15 +101,12 @@ fn obtain_coordinates(reader: &mut BufReader<File>) -> Result<(i32, i32), ShopEr
 }
 
 impl Shop{
+    /// Private constructor for Shop
     fn new(stock: HashMap<u32, u32>, position: Point) -> Shop{
         Shop{stock, position}
     }
     
-    ///"
-    /// x,y //posicion
-    /// nombre,id,cant
-    /// nombre,id,cant
-    /// "
+    /// Public constructor for Shop. Receives a path to a file with the shop stock and returns a Shop.
     pub fn from(path: String)-> Result<Shop, ShopError>{
         let file = File::open(path);
         println!("{:?}", file);
@@ -80,18 +124,6 @@ impl Shop{
 
 }
 
-impl Actor for Shop{
-    type Context = Context<Self>;
-}
-
-impl Handler<HayZapatillas> for Shop{
-    type Result = bool;
-
-    fn handle(&mut self, _msg:HayZapatillas , _ctx: &mut Context<Self>) -> Self::Result {
-        println!("Entre al handler y digo que hay zapas en thread: {:?}",thread::current().id());
-        true
-    }
-}
 
 
 #[cfg(test)]
@@ -105,11 +137,4 @@ mod test {
         let shop = Shop::new(stock, pos);
         assert_eq!(shop_from_file, shop)
     }
-
 }
-
-/*
-zapatilla,1,5
-remera,2,3
-gorra,3,6
-*/
