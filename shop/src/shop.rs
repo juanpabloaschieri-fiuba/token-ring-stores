@@ -1,6 +1,7 @@
-use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture};
+use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture, AsyncContext};
 use std::{collections::HashMap, thread, time::Duration, fs::File, io::{BufRead, BufReader}};
-use crate::point::*;
+use crate::{point::*, ecomerce::Ecommerce};
+use crate::messages::*;
 
 // Positions of the coordinates in the header of the file
 const X_POS: usize = 0;
@@ -12,8 +13,9 @@ const AMOUNT_POS: usize = 2;
 
 #[derive(PartialEq, Debug)]
 pub struct Shop{
-    stock: HashMap<u32, u32>,
-    position: Point,
+    stock: HashMap<u32, (u32, u32)>,
+    location: Point,
+    ecomerce_addr: Option<Addr<Ecommerce>>,
 }
 
 impl Actor for Shop{
@@ -22,8 +24,8 @@ impl Actor for Shop{
 
 impl Shop{
     /// Private constructor for Shop
-    pub fn new(stock: HashMap<u32, u32>, position: Point) -> Shop{
-        Shop{stock, position}
+    pub fn new(stock: HashMap<u32, (u32, u32)>, location: Point) -> Shop{
+        Shop{stock, location, ecomerce_addr: None}
     }
     
     /// Public constructor for Shop. Receives a path to a file with the shop stock and returns a Shop.
@@ -42,12 +44,12 @@ impl Shop{
         Ok(Shop::new(stock, point))
     }
     
-    fn verify_enough_stock(&self, request: &PhysicalRequest)-> bool{
+    fn verify_enough_stock(&self, request: &Request)-> bool{
 
         for (index,product) in request.product_ids.iter().enumerate(){
             match self.stock.get(product){
                 Some(amount) => {
-                    if request.product_amount[index] > *amount{
+                    if request.product_amount[index] > amount.0{
                         return false
                     }
                 },
@@ -57,68 +59,90 @@ impl Shop{
         true
     }
     
-    /// Can not be called withought having called verify_enough_stock beforehand
-    fn reduce_stock(&mut self, request: &PhysicalRequest){
-        for (i, product) in request.product_ids.iter().enumerate(){
-            if let Some(product) = self.stock.get_mut(product){
-                *product -= request.product_amount[i];
+    fn reduce_stock(&mut self, request: &Request)->Result<(), ShopError>{
+        if self.verify_enough_stock(request){
+            for (i, product) in request.product_ids.iter().enumerate(){
+                if let Some(product) = self.stock.get_mut(product){
+                    product.0 -= request.product_amount[i];
+                }
             }
+            return Ok(())
         }
+        Err(ShopError::ErrorNotEnoughStock)
     }
 
-    fn handle_physical_request(&mut self, request: PhysicalRequest)-> bool{
-        if self.verify_enough_stock(&request){
-            self.reduce_stock(&request);
-            return true
-        };
-        false
+    fn handle_physical_request(&mut self, request: &Request)-> Result<(), ShopError>{
+        self.reduce_stock(request)
     }
+
+    fn is_physical_request(&self, request: &Request) -> bool{
+        self.location == request.destination
+    }
+
+    fn reserve_stock(&mut self, request: &Request)->Result<(), ShopError>{
+        if self.verify_enough_stock(request){
+            for (i, product) in request.product_ids.iter().enumerate(){
+                if let Some(product) = self.stock.get_mut(product){
+                    product.0 -= request.product_amount[i];
+                    product.1 += request.product_amount[i];
+                }
+            }
+            return Ok(())
+        }
+        Err(ShopError::ErrorNotEnoughStock)
+    }
+    
+
+    fn handle_online_request(&mut self, request: &Request)-> Result<(), ShopError>{
+        self.reserve_stock(request)?;
+        
+        //Spawnear repartidor
+            // Ves a donde tenes que ir, calculas tiempo
+            // Tiras rand pa ver si llega o no
+            // Mandas al REPARTIDOR? (OTRO ACTOR/THREAD QUE TE MANDE UN MSJ CUANDO LLEGO O CUANDO LE CANCELAN)
+            // Devolver el stock en caso de que lo cancelen
+            // Mandar msj al ecommers con el resultado final
+        Ok(())
+    }
+
+
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ShopError {
     ErrorCreatingShop,
     ErrorReadingFile,
     ErrorParsingData,
+    ErrorNotEnoughStock,
+    ErrorCantCommunicateWithEcommerce
 }
 
+impl Handler<Request> for Shop{
+    type Result = Result<(), MessageError>;
 
-#[derive(Message, Debug,PartialEq)]
-#[rtype(result = "bool")]
-pub struct PhysicalRequest{
-    pub delay: Duration,
-    product_ids: Vec<u32>,
-    product_amount: Vec<u32>,
-}
-
-impl PhysicalRequest{
-    pub fn new(delay: Duration, product_ids: Vec<u32>, product_amount: Vec<u32>)-> PhysicalRequest{
-        PhysicalRequest{delay,product_ids,product_amount}
-    }
-}
-
-impl Handler<PhysicalRequest> for Shop{
-    type Result = bool;
-
-    fn handle(&mut self, _msg:PhysicalRequest , _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg:Request , _ctx: &mut Context<Self>) -> Self::Result {
         println!("WIP: Entre al handler de un request con id: {:?}",thread::current().id());
         println!("WIP: La request que llego es: {:?}",_msg);
-        self.handle_physical_request(_msg)
+        if self.is_physical_request(&_msg){
+            return self.handle_physical_request(&_msg).map_err(|error| MessageError::ShopError(error))
+        };
+        if let Err(error) = self.handle_online_request(&_msg){
+            if let ShopError::ErrorNotEnoughStock = error{
+                if let Some(ecommerce_addr) = &self.ecomerce_addr{
+                    ecommerce_addr.try_send(NotEnoughStockMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce))?;
+                }
+            }
+        };
+        Ok(())
     }
 }
 
-
-#[derive(Message)]
-#[rtype(result = "bool")]
-struct HayZapatillas();
-
-impl Handler<HayZapatillas> for Shop{
-    type Result = bool;
-
-    fn handle(&mut self, _msg:HayZapatillas , _ctx: &mut Context<Self>) -> Self::Result {
-        println!("WIP: Entre al handler y digo que hay zapas en thread: {:?}",thread::current().id());
-        true
+impl Handler<EcommerceAddrMsg> for Shop{
+    type Result = ();
+    
+    fn handle(&mut self, _msg:EcommerceAddrMsg , _ctx: &mut Context<Self>) -> Self::Result {
+        self.ecomerce_addr = Some(_msg.ecommerce_addr)
     }
 }
 
@@ -126,7 +150,7 @@ impl Handler<HayZapatillas> for Shop{
 /// Charges the stock of the shop from the shop stock file. Receives a BufReader with the file
 /// and returns a HashMap with the stock: the keys being the ID of the product and the value being
 /// the quantity of each.
-fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, u32>, ShopError>{
+fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, (u32,u32)>, ShopError>{
     let mut stock = HashMap::new();
 
     for res_line in reader.lines(){
@@ -136,7 +160,7 @@ fn charge_stock_from_file(reader: &mut BufReader<File>) -> Result<HashMap<u32, u
 
         let id: u32   = vec[ID_POS].parse().map_err(|_| ShopError::ErrorParsingData)?;
         let amount: u32   = vec[AMOUNT_POS].parse().map_err(|_| ShopError::ErrorParsingData)?;
-        stock.insert(id, amount);
+        stock.insert(id, (amount,0));
     };  
     Ok(stock)
 }
@@ -163,7 +187,7 @@ mod test {
     #[test]
     fn shop_test_1_new_from_file(){
         let shop_from_file = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
-        let stock = HashMap::from([(1,5), (2,4), (3,6)]);
+        let stock = HashMap::from([(1,(5,0)), (2,(4,0)), (3,(6,0))]);
         let pos = Point::new(2, 3);
         let shop = Shop::new(stock, pos);
         assert_eq!(shop_from_file, shop)
@@ -172,8 +196,8 @@ mod test {
     #[test]
     fn shop_test_2_enouncgh_stock_for_puhysical_request(){
         let shop = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
-        let invalid_request = PhysicalRequest::new(Duration::from_secs(0), vec![1], vec![100]);
-        let valid_request = PhysicalRequest::new(Duration::from_secs(0), vec![1,2], vec![1,1]);
+        let invalid_request = Request::new(vec![1], vec![100], Point::new(0,0));
+        let valid_request = Request::new( vec![1,2], vec![1,1], Point::new(0,0));
         assert!(!shop.verify_enough_stock(&invalid_request));
         assert!(shop.verify_enough_stock(&valid_request));
     }
@@ -181,14 +205,16 @@ mod test {
     #[test]
     fn shop_test_3_can_reduce_stock(){
         let mut shop = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
-        let request = PhysicalRequest::new(Duration::from_secs(0), vec![1,2,3], vec![2,4,2]);
+        let request = Request::new( vec![1,2,3], vec![2,4,2], Point::new(0,0));
         shop.reduce_stock(&request);
         let remaind_of_product_1 = shop.stock[&1];
         let remaind_of_product_2 = shop.stock[&2];
         let remaind_of_product_3 = shop.stock[&3];
-        assert_eq!(remaind_of_product_1, 3);
-        assert_eq!(remaind_of_product_2, 0);
-        assert_eq!(remaind_of_product_3, 4);
+        assert_eq!(remaind_of_product_1, (3,0));
+        assert_eq!(remaind_of_product_2, (0,0));
+        assert_eq!(remaind_of_product_3, (4,0));
     }
+
+    //WIP: Test reserve_stock
     
 }

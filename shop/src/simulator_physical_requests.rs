@@ -3,11 +3,26 @@ use std::thread::JoinHandle;
 use tokio::fs::File;
 use tokio::io::{BufReader,AsyncBufReadExt};
 use std::time::Duration;
-use actix::prelude::*;
-use crate::shop::*;
+use actix::prelude::{Addr};
+use crate::shop::{*, self};
+use crate::messages::*;
+use crate::point::*;
 ///13 //tiempo hasta pedido
 ///ida,5;idb7,8;
 /// 
+
+
+#[derive(Debug,PartialEq)]
+struct PhysicalRequest{
+    delay: Duration,
+    request: Request,
+}
+
+impl PhysicalRequest{
+    pub fn new(delay: Duration, product_ids: Vec<u32>, product_amount: Vec<u32>, shop_location: Point)-> PhysicalRequest{
+        PhysicalRequest{delay, request: Request::new(product_ids, product_amount, shop_location)}
+    }
+}
 
 #[derive(Debug)]
 pub enum PhysicalRequestError {
@@ -15,15 +30,15 @@ pub enum PhysicalRequestError {
     ErrorParsingData
 }
 
-pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>)-> Result<(), PhysicalRequestError>{
+pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>, shop_location: Point)-> Result<(), PhysicalRequestError>{
     let orders = File::open(path).await.map_err(|_| PhysicalRequestError::FileError(FileError::ErrorOpeningFile))?;
     let mut reader = BufReader::new(orders);
     loop {
-        match read_request(&mut reader).await {
-            Ok(request) => {
-                print!("WIP: Voy a dormir por: {:?}",request.delay);
-                tokio::time::sleep(request.delay).await;
-                let res = shop_addr.send(request).await;
+        match read_request(&mut reader, shop_location).await {
+            Ok(p_request) => {
+                print!("WIP: Voy a dormir por: {:?}",p_request.delay);
+                tokio::time::sleep(p_request.delay).await;
+                let res = shop_addr.send(p_request.request).await;
                 print!("WIP: El resultado fue: {:?}", res);
             },
             Err(error) => {
@@ -60,13 +75,13 @@ async fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>)
     Ok((request_products,request_amounts))
 }
 
-async fn read_request(reader: &mut BufReader<File>) -> Result<PhysicalRequest,PhysicalRequestError>{
+async fn read_request(reader: &mut BufReader<File>,shop_location: Point) -> Result<PhysicalRequest,PhysicalRequestError>{
     println!("hola");
     let delay = read_delay(reader).await?;
     println!("hola2");
     let (request_products, request_amounts) = read_order(reader).await?;
     println!("hola3");
-    Ok(PhysicalRequest::new(delay,request_products,request_amounts))
+    Ok(PhysicalRequest::new(delay,request_products,request_amounts, shop_location))
 }
 
 #[derive(Debug)]
@@ -93,8 +108,8 @@ mod test {
     use super::*;
 
     fn get_physical_requests_test_1_requests()-> (PhysicalRequest, PhysicalRequest){
-        let p1 = PhysicalRequest::new(Duration::from_secs(2), Vec::from([1,2]), Vec::from([2,1]));
-        let p2 = PhysicalRequest::new(Duration::from_secs(3), Vec::from([1,3]), Vec::from([1,1]));
+        let p1 = PhysicalRequest::new(Duration::from_secs(2), Vec::from([1,2]), Vec::from([2,1]), Point::new(0,0));
+        let p2 = PhysicalRequest::new(Duration::from_secs(3), Vec::from([1,3]), Vec::from([1,1]), Point::new(0, 0));
         (p1,p2)
     }
 
@@ -103,8 +118,8 @@ mod test {
         let path = String::from("test_files/physical_requests_test_1.txt");
         let file = File::open(path).await.unwrap();
         let mut reader = BufReader::new(file);
-        let request1 = read_request(&mut reader).await.unwrap();
-        let request2 = read_request(&mut reader).await.unwrap();
+        let request1 = read_request(&mut reader, Point::new(0,0)).await.unwrap();
+        let request2 = read_request(&mut reader, Point::new(0,0)).await.unwrap();
         let (p1, p2) = get_physical_requests_test_1_requests();
         assert_eq!(request1, p1);
         assert_eq!(request2, p2);

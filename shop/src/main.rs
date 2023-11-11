@@ -1,16 +1,28 @@
 use actix_rt::time::sleep;
+use shop::ecomerce::Ecommerce;
 use shop::{shop::Shop, point::Point};
-use shop::physical_requests::simulate_physical_requests;
+use shop::simulator_physical_requests::simulate_physical_requests;
+use shop::messages::EcommerceAddrMsg;
 use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
-use actix::{Actor, Addr,System};
+use actix::{Actor, Addr,System, MailboxError};
+
+async fn load_ecommerce_addr(shop_addr: Addr<Shop>,ecommerce_addr: Addr<Ecommerce>)->Result<(), MailboxError>{
+    shop_addr.send(EcommerceAddrMsg::new(ecommerce_addr)).await
+}
 
 #[actix_rt::main]
 async fn main() {
     println!("a");
-    let shop_addr: Addr<Shop> = Shop::new(HashMap::new(), Point::new(0, 0)).start();
-    let handler = simulate_physical_requests("test_files/physical_requests_test_1.txt".to_string(), shop_addr).await;
+    let shop_location = Point::new(0,0);
+    let shop_addr: Addr<Shop> = Shop::new(HashMap::new(), shop_location).start();
+    let ecommerce_addr: Addr<Ecommerce> = Ecommerce::new(shop_addr.clone()).start();
+    if load_ecommerce_addr(shop_addr.clone(),ecommerce_addr).await.is_err(){
+        println!("tengo miedo");
+        return
+    };
+    let handler = simulate_physical_requests("test_files/physical_requests_test_1.txt".to_string(), shop_addr, shop_location).await;
     //let res = shop_addr.send(HayZapatillas{}).await.unwrap();
     //if res{
     //    println!("Hay zapatillas en thread {:?}",thread::current().id())
