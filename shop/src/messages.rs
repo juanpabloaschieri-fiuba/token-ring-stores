@@ -16,18 +16,6 @@ impl Request{
     }
 }
 
-#[derive(Message, Debug,PartialEq)]
-#[rtype(result = "()")]
-pub struct NotEnoughStockMsg{
-    request: Request
-}
-
-impl NotEnoughStockMsg{
-    pub fn new(request: Request)->NotEnoughStockMsg{
-        NotEnoughStockMsg{request}
-    }
-}
-
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct EcommerceAddrMsg{
@@ -39,6 +27,26 @@ impl EcommerceAddrMsg{
         EcommerceAddrMsg{ecommerce_addr}
     }
 }
+
+#[derive(Message, Debug)]
+#[rtype(result = "bool")]
+pub struct EnoughStockMsg{
+    pub request:Request
+}
+
+impl EnoughStockMsg{
+    pub fn new(request: Request)->EnoughStockMsg{
+        EnoughStockMsg{request}
+    }
+}
+
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub enum StockAvailabilityMsg{
+    EnoughStock(Request),
+    NotEnoughStock(Request)
+}
+
 
 #[derive(Debug)]
 pub enum MessageError{

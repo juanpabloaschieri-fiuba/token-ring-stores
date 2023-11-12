@@ -1,6 +1,6 @@
 use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture};
 use crate::shop::Shop;
-use crate::messages::{Request, MessageError, NotEnoughStockMsg};
+use crate::messages::{Request, MessageError, StockAvailabilityMsg};
 
 #[derive(Debug)]
 pub struct Ecommerce{
@@ -28,13 +28,14 @@ impl Handler<Request> for Ecommerce{
     }
 }
 
-impl Handler<NotEnoughStockMsg> for Ecommerce{
+impl Handler<StockAvailabilityMsg> for Ecommerce{
     type Result = ();
-    
-    fn handle(&mut self, _msg:NotEnoughStockMsg , _ctx: &mut Context<Self>) -> Self::Result {
-        
-        //hacer otra eleccion
-        todo!()
+
+    fn handle(&mut self, _msg:StockAvailabilityMsg , _ctx: &mut Context<Self>) -> Self::Result {
+        match _msg{
+            StockAvailabilityMsg::EnoughStock(request) => todo!(), //continuas votacion diciendo que podes WIP
+            StockAvailabilityMsg::NotEnoughStock(_) => todo!(), //continuas votacion diciendo que no podes WIP
+        }
     }
 }
 

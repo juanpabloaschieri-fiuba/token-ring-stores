@@ -130,7 +130,7 @@ impl Handler<Request> for Shop{
         if let Err(error) = self.handle_online_request(&_msg){
             if let ShopError::ErrorNotEnoughStock = error{
                 if let Some(ecommerce_addr) = &self.ecomerce_addr{
-                    ecommerce_addr.try_send(NotEnoughStockMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce))?;
+                    ecommerce_addr.try_send(StockAvailabilityMsg::NotEnoughStock(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce))?;
                 }
             }
         };
@@ -146,6 +146,25 @@ impl Handler<EcommerceAddrMsg> for Shop{
     }
 }
 
+impl Handler<EnoughStockMsg> for Shop{
+    type Result = bool;
+    
+    fn handle(&mut self, _msg:EnoughStockMsg , _ctx: &mut Context<Self>) -> Self::Result {
+        let enough_stock = self.verify_enough_stock(&_msg.request);
+        
+        let stock_availability = if enough_stock{
+            StockAvailabilityMsg::EnoughStock(_msg.request)
+        }else{
+            StockAvailabilityMsg::NotEnoughStock(_msg.request)
+        };
+        if let Some(ecommerce_addr) = &self.ecomerce_addr{
+            if ecommerce_addr.try_send(stock_availability).is_err(){
+                println!("Failed to communicate with Ecommerce")//WIP
+            }
+        }
+        return enough_stock;
+    }
+}
 
 /// Charges the stock of the shop from the shop stock file. Receives a BufReader with the file
 /// and returns a HashMap with the stock: the keys being the ID of the product and the value being
