@@ -2,7 +2,7 @@ use actix::{Message, Addr};
 use crate::{point::Point, shop::ShopError, ecomerce::{EcommerceError, Ecommerce}};
 
 
-#[derive(Message, Debug,PartialEq, Eq)]
+#[derive(Message, Debug,PartialEq, Eq, Clone)]
 #[rtype(result = "Result<(), MessageError>")]
 pub struct Request{
     pub product_ids: Vec<u32>,
@@ -47,6 +47,25 @@ pub enum StockAvailabilityMsg{
     NotEnoughStock(Request)
 }
 
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub enum FinishedDelivery{
+    ArrivedInTime(Request),
+    ArrivedLate(Request)
+}
+
+
+#[derive(Message, Debug)]
+#[rtype(result = "()")]
+pub struct CantHandleRequestMsg{
+    request: Request
+}
+
+impl CantHandleRequestMsg{
+    pub fn new(request: Request)->CantHandleRequestMsg{
+        CantHandleRequestMsg{request}
+    }
+}
 
 #[derive(Debug)]
 pub enum MessageError{
