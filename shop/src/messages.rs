@@ -2,7 +2,7 @@ use actix::{Message, Addr};
 use crate::{point::Point, shop::ShopError, ecomerce::{EcommerceError, Ecommerce}};
 
 
-#[derive(Message, Debug,PartialEq)]
+#[derive(Message, Debug,PartialEq, Eq)]
 #[rtype(result = "Result<(), MessageError>")]
 pub struct Request{
     pub product_ids: Vec<u32>,

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 use actix::{Actor, Addr,System, MailboxError};
+use std::sync::{mpsc};
 
 async fn load_ecommerce_addr(shop_addr: Addr<Shop>,ecommerce_addr: Addr<Ecommerce>)->Result<(), MailboxError>{
     shop_addr.send(EcommerceAddrMsg::new(ecommerce_addr)).await
@@ -14,10 +15,13 @@ async fn load_ecommerce_addr(shop_addr: Addr<Shop>,ecommerce_addr: Addr<Ecommerc
 
 #[actix_rt::main]
 async fn main() {
-    println!("a");
     let shop_location = Point::new(0,0);
-    let shop_addr: Addr<Shop> = Shop::new(HashMap::new(), shop_location).start();
+    let (tx,rx) = mpsc::Channel();
+    let shop_addr: Addr<Shop> = Shop::new(HashMap::new(), shop_location).start();       //WIP agregar tx del channel
     let ecommerce_addr: Addr<Ecommerce> = Ecommerce::new(shop_addr.clone()).start();
+    let delivery_handler = thread::spawn(move|| {
+        delivery(shop_addr,rx.clone(),shop_location);
+    });
     if load_ecommerce_addr(shop_addr.clone(),ecommerce_addr).await.is_err(){
         println!("tengo miedo");
         return

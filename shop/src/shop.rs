@@ -1,5 +1,6 @@
 use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture, AsyncContext};
 use std::{collections::HashMap, thread, time::Duration, fs::File, io::{BufRead, BufReader}};
+use std::sync::mpsc::Sender;
 use crate::{point::*, ecomerce::Ecommerce};
 use crate::messages::*;
 
@@ -97,16 +98,13 @@ impl Shop{
         self.reserve_stock(request)?;
         
         //Spawnear repartidor
-            // Ves a donde tenes que ir, calculas tiempo
-            // Tiras rand pa ver si llega o no
-            // Mandas al REPARTIDOR? (OTRO ACTOR/THREAD QUE TE MANDE UN MSJ CUANDO LLEGO O CUANDO LE CANCELAN)
+            // Ves a donde tenes que ir, calculas tiempo                    OK
+            // Tiras rand pa ver si llega o no                              
+            // Mandas al REPARTIDOR? (OTRO ACTOR/THREAD QUE TE MANDE UN MSJ CUANDO LLEGO O CUANDO LE CANCELAN) OK
             // Devolver el stock en caso de que lo cancelen
             // Mandar msj al ecommers con el resultado final
         Ok(())
     }
-
-
-
 }
 
 #[derive(Debug, PartialEq)]
@@ -213,7 +211,7 @@ mod test {
     }
 
     #[test]
-    fn shop_test_2_enouncgh_stock_for_puhysical_request(){
+    fn shop_test_2_enoungh_stock(){
         let shop = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
         let invalid_request = Request::new(vec![1], vec![100], Point::new(0,0));
         let valid_request = Request::new( vec![1,2], vec![1,1], Point::new(0,0));
@@ -233,7 +231,33 @@ mod test {
         assert_eq!(remaind_of_product_2, (0,0));
         assert_eq!(remaind_of_product_3, (4,0));
     }
+    
+    #[test]
+    fn shop_test_4_can_reserve_stock()-> Result<(), ShopError>{
+        let mut shop = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
+        let request = Request::new( vec![1,2,3], vec![2,4,2], Point::new(0,0));
+        shop.reserve_stock(&request)?;
+        let remaind_of_product_1 = shop.stock[&1];
+        let remaind_of_product_2 = shop.stock[&2];
+        let remaind_of_product_3 = shop.stock[&3];
+        assert_eq!(remaind_of_product_1, (3,2));
+        assert_eq!(remaind_of_product_2, (0,4));
+        assert_eq!(remaind_of_product_3, (4,2));
+        Ok(())
+    }
 
-    //WIP: Test reserve_stock
+    fn shop_test_5_can_not_reserve_stock()->Result<(),ShopError>{
+        let mut shop = Shop::from("test_files/shop_test_1.txt".to_string()).unwrap();
+        let request = Request::new( vec![1,2,3], vec![45,1000,2], Point::new(0,0));
+        
+        assert_eq!(Err(ShopError::ErrorNotEnoughStock),shop.reserve_stock(&request));
+        let remaind_of_product_1 = shop.stock[&1];
+        let remaind_of_product_2 = shop.stock[&2];
+        let remaind_of_product_3 = shop.stock[&3];
+        assert_eq!(remaind_of_product_1, (5,0));
+        assert_eq!(remaind_of_product_2, (4,0));
+        assert_eq!(remaind_of_product_3, (6,0));
+        Ok(())
+    }
     
 }
