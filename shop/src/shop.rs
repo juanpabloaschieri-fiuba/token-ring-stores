@@ -86,7 +86,9 @@ impl Shop{
         Err(ShopError::ErrorNotEnoughStock)
     }
     
-    /// This function is 
+    /// This function is called when an online order is delivered. It receives a FinishedDelivery
+    /// and, if it arrived in time, it reduces the amount of the reserved products, otherwise the
+    /// reserved products are added back to the shop's stock 
     fn handled_finished_delivery(&mut self, arrived_delivery: FinishedDelivery) {
         let (arrived_in_time, request) = match arrived_delivery {
             FinishedDelivery::ArrivedInTime(request) => (true, request),
@@ -103,6 +105,8 @@ impl Shop{
         }
     }
 
+    /// Given a request made to the online shop, it processes the request and sends it to the
+    /// delivery system. Could return an error if the shop can't deliver the package.
     fn handle_online_request(&mut self, request: &Request)-> Result<(), ShopError>{
         self.process_request(&request, false)?;
         self.delivery_sender.send(request.clone()).map_err(|_| ShopError::ErrorCannotDeliverPackage)?;
@@ -111,6 +115,7 @@ impl Shop{
     }
 }
 
+/// Enum that represents the errors that can occur when a message is sent to a shop.
 #[derive(Debug, PartialEq)]
 pub enum ShopError {
     ErrorCreatingShop,
@@ -121,9 +126,13 @@ pub enum ShopError {
     ErrorCannotDeliverPackage
 }
 
+
 impl Handler<Request> for Shop{
     type Result = Result<(), MessageError>;
 
+    /// Implementation for the Request message. If the request is a physical request, it processes
+    /// the request and, if it is an online request, it sends it to the delivery system.
+    /// Could return an error if the shop hasn't enough stock or if it can't deliver the package.
     fn handle(&mut self, _msg: Request , _ctx: &mut Context<Self>) -> Self::Result {
         println!("WIP: Entre al handler de un request con id: {:?}",thread::current().id());
         println!("WIP: La request que llego es: {:?}",_msg);
@@ -142,6 +151,8 @@ impl Handler<Request> for Shop{
 impl Handler<FinishedDelivery> for Shop{
     type Result = ();
 
+    /// Implementation for the FinishedDelivery message. Used to handle the delivery of an online
+    /// order.
     fn handle(&mut self, msg: FinishedDelivery, ctx: &mut Self::Context) -> Self::Result {
         self.handled_finished_delivery(msg)
     }
@@ -149,7 +160,8 @@ impl Handler<FinishedDelivery> for Shop{
 
 impl Handler<EcommerceAddrMsg> for Shop{
     type Result = ();
-    
+
+    /// Binds the address of the Ecommerce to the shop.
     fn handle(&mut self, _msg:EcommerceAddrMsg , _ctx: &mut Context<Self>) -> Self::Result {
         self.ecomerce_addr = Some(_msg.ecommerce_addr)
     }
@@ -158,12 +170,15 @@ impl Handler<EcommerceAddrMsg> for Shop{
 impl Handler<EnoughStockMsg> for Shop{
     type Result = bool;
     
+    /// Implementation for the EnoughStock message. Utilized to check if the shop has enough stock to
+    /// take an order, if it has a Ecommerce address, it sends a message to the Ecommerce with the
+    /// result of the verification.
     fn handle(&mut self, _msg:EnoughStockMsg , _ctx: &mut Context<Self>) -> Self::Result {
         let enough_stock = self.verify_enough_stock(&_msg.request);
         
         let stock_availability = if enough_stock{
             StockAvailabilityMsg::EnoughStock(_msg.request)
-        }else{
+        } else {
             StockAvailabilityMsg::NotEnoughStock(_msg.request)
         };
         if let Some(ecommerce_addr) = &self.ecomerce_addr{

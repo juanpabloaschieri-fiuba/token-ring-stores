@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use rand::prelude::*;
 use actix::{Actor, Context, Handler, System, Addr, Message,};
 
-const TIME_PER_DISTANCE_UNIT: f32 = 1.0;
+const TIME_PER_DISTANCE_UNIT: f32 = 1.0; // WIP por que lo dejamos en 1?
 const DROP_PROBABILITY: f32 = 0.1;
 
 

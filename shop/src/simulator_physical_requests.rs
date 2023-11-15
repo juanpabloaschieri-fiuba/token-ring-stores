@@ -11,7 +11,7 @@ use crate::point::*;
 ///ida,5;idb7,8;
 /// 
 
-
+/// Struct that represents a physical request
 #[derive(Debug,PartialEq)]
 struct PhysicalRequest{
     delay: Duration,
@@ -19,17 +19,21 @@ struct PhysicalRequest{
 }
 
 impl PhysicalRequest{
+
+    /// Creates a new PhysicalRequest
     pub fn new(delay: Duration, product_ids: Vec<u32>, product_amount: Vec<u32>, shop_location: Point)-> PhysicalRequest{
         PhysicalRequest{delay, request: Request::new(product_ids, product_amount, shop_location)}
     }
 }
 
+/// Enum that represents the errors that can occur when generating physical requests
 #[derive(Debug)]
 pub enum PhysicalRequestError {
     FileError(FileError),
     ErrorParsingData
 }
 
+/// Simulates physical requests to the shop from a file
 pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>, shop_location: Point)-> Result<(), PhysicalRequestError>{
     let orders = File::open(path).await.map_err(|_| PhysicalRequestError::FileError(FileError::ErrorOpeningFile))?;
     let mut reader = BufReader::new(orders);
@@ -51,13 +55,14 @@ pub async fn simulate_physical_requests(path:String, shop_addr: Addr<Shop>, shop
     }
 }
 
+/// Reads the delay part of the physical request from the file
 async fn read_delay(reader: &mut BufReader<File>) -> Result<Duration, PhysicalRequestError> {
     let delay = read_line(reader).await.map_err(|file_error| PhysicalRequestError::FileError(file_error))?;
     let delay: u32 = delay.parse().map_err(|_| PhysicalRequestError::ErrorParsingData)?;
     Ok(Duration::from_secs(delay as u64))
 }
 
-
+/// Reads the order part of the physical request from the file
 async fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), PhysicalRequestError> {
     let mut request_products: Vec<u32> = Vec::new();
     let mut request_amounts: Vec<u32> = Vec::new();
@@ -75,6 +80,7 @@ async fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>)
     Ok((request_products,request_amounts))
 }
 
+/// Reads the physical request from the file
 async fn read_request(reader: &mut BufReader<File>,shop_location: Point) -> Result<PhysicalRequest,PhysicalRequestError>{
     println!("hola");
     let delay = read_delay(reader).await?;
@@ -84,6 +90,7 @@ async fn read_request(reader: &mut BufReader<File>,shop_location: Point) -> Resu
     Ok(PhysicalRequest::new(delay,request_products,request_amounts, shop_location))
 }
 
+/// Enum that represents the errors that can occur when reading from a file
 #[derive(Debug)]
 pub enum FileError{
     ErrorReadingLine,
@@ -91,6 +98,7 @@ pub enum FileError{
     ErrorEof
 }
 
+/// Reads a line from a file
 async fn read_line(reader: &mut BufReader<File>)->Result<String, FileError>{
     let mut buf = String::new();
     if reader.read_line(&mut buf).await.map_err(|_| FileError::ErrorReadingLine)? == 0{
