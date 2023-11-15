@@ -15,6 +15,7 @@ const MAX_PEER_TIMEOUT : u8 = 4;
 
 type SharedRingAddresses = Arc<Mutex<HashMap<u16, SocketAddr>>>;
 type SharedRingTopology = Arc<Mutex<VecDeque<u16>>>;
+//p los mensajes a cuidar compartidos entre el sender y el receiver
 
 struct TokenRingNode{
     
@@ -55,6 +56,7 @@ impl TokenRingSender {
     }
 
     fn recv_until_smallest_timeout(&self) -> Result<RingMessage, TokenRingError>{
+        //p obtener el minimo entre el timeout de la window y el de los mensajes a cargo 
         match self.message_window.smallest_timeout(){
             Some(timeout) => self.message_receiver.recv_timeout(timeout).map_err(|error|
                 match error{
@@ -84,6 +86,7 @@ impl TokenRingSender {
                 _ => return Err(error),
             }
         }
+        //p fijarse si es nuestro el mensaje, y agregarlo a mensajes a cuidar
         Ok(())
     }
     
@@ -92,6 +95,7 @@ impl TokenRingSender {
     }
 
     fn handle_timeout(&mut self) -> Result<(),TokenRingError>{
+        //p hay que fijarse cual de los dos timeouteo, y en funcion de eso, nadelear como corresponda.
         match self.message_window.handle_timeout(){
             Ok(()) => Ok(()),
             Err(error) => {
@@ -131,7 +135,7 @@ impl TokenRingSender {
 
 fn run_sender(node_id: u16, rx: Receiver<RingMessage>, ring_topology: SharedRingTopology, ring_addr: SharedRingAddresses, socket: UdpSocket, initial_next_peer_addr: SocketAddr)->Result<(),TokenRingError>{
     let mut sender = TokenRingSender::new(node_id, rx, ring_topology, ring_addr, socket, initial_next_peer_addr);
-    //sender.message_receiver.recv_timeout(timeout);
+    
     loop{
         let msg = sender.recv_until_smallest_timeout();
             //fijarse si termino (me mato)
@@ -304,20 +308,3 @@ impl Window{
         Ok(())
     }
 }
-
-
-//let (tx, rx): (std::sync::mpsc::Sender<Box<dyn MyTrait>>, std::sync::mpsc::Receiver<Box<dyn MyTrait>>) = std::sync::mpsc::channel();
-/*
-struct RingMessage{
-    signatures: Vec<u16>,
-    msg_id: u8,
-    msg_type: RingMessageType,
-}
-
-pub enum RingMessageType {
-    CoordinateRequest(CoordinateRequestMsg)
-}
-*/
-
-
-
