@@ -4,9 +4,7 @@ use shop::ecomerce::Ecommerce;
 use shop::{shop::Shop, point::Point};
 use shop::simulator_physical_requests::simulate_physical_requests;
 use shop::messages::EcommerceAddrMsg;
-use std::collections::HashMap;
 use std::thread;
-use std::time::Duration;
 use actix::{Actor, Addr,System, MailboxError};
 use std::sync::mpsc;
 

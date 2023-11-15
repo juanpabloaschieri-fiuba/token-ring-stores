@@ -46,8 +46,9 @@ impl Shop{
         Ok(Shop::new(stock, point, delivery_sender))
     }
     
+    /// Given a request, returns if the shop has enough stock to take the order. The request can
+    /// have more than one product, so it checks if the shop has enough stock of each product.
     fn verify_enough_stock(&self, request: &Request)-> bool{
-
         for (index,product) in request.product_ids.iter().enumerate(){
             match self.stock.get(product){
                 Some(amount) => {
@@ -55,17 +56,22 @@ impl Shop{
                         return false
                     }
                 },
-                None => {return false}
+                None => return false,
             }
         }
         true
     }
 
+    /// Given a request, returns true if the request is a physical request to the shop.
     fn is_physical_request(&self, request: &Request) -> bool{
         self.location == request.destination
     }
 
-    fn process_request(&mut self, request: &Request, physical_request: bool)->Result<(), ShopError>{
+    /// Given a request, the shop checks if it has enough stock to take the order. If it does, it
+    /// reduces the stock of the shop by the amount of the products in the request. If it isn't a 
+    /// physical request, it reserves the stock of the requested products. Returns an error if the
+    /// shop doesn't have enough stock.
+    fn process_request(&mut self, request: &Request, physical_request: bool) -> Result<(), ShopError>{
         if self.verify_enough_stock(request){
             for (i, product) in request.product_ids.iter().enumerate(){
                 if let Some(product) = self.stock.get_mut(product){
@@ -80,6 +86,7 @@ impl Shop{
         Err(ShopError::ErrorNotEnoughStock)
     }
     
+    /// This function is 
     fn handled_finished_delivery(&mut self, arrived_delivery: FinishedDelivery) {
         let (arrived_in_time, request) = match arrived_delivery {
             FinishedDelivery::ArrivedInTime(request) => (true, request),
@@ -124,10 +131,8 @@ impl Handler<Request> for Shop{
             return self.process_request(&_msg, true).map_err(|error| MessageError::ShopError(error))
         };
         if let Err(error) = self.handle_online_request(&_msg){
-            if let ShopError::ErrorNotEnoughStock = error{
-                if let Some(ecommerce_addr) = &self.ecomerce_addr{
-                    ecommerce_addr.try_send(CantHandleRequestMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce))?;
-                }
+            if let Some(ecommerce_addr) = &self.ecomerce_addr{
+                ecommerce_addr.try_send(CantHandleRequestMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce))?;
             }
         };
         Ok(())

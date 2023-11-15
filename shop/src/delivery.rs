@@ -132,7 +132,7 @@ pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Request>,shop_location:
     let mut delivery = Delivery::new(shop_addr, receiver,shop_location);
     
     loop{
-        //si no hay que finiquitar
+        //si no hay que finiquitar WIP
         let delivery_order = delivery.wait_until_finish_or_new_delivery()?;
         if let Some(delivery_order) = delivery_order{
             delivery.inform_shop(delivery_order)?;
