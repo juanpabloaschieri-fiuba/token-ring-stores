@@ -1,5 +1,5 @@
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::os::unix::net::SocketAddr;
+use std::process::id;
 use std::sync::mpsc::{Sender, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::collections::{VecDeque, HashMap, BinaryHeap};
@@ -68,24 +68,37 @@ impl TokenRingSender {
         self.messages_to_send.pop_front()
     }
 
-    fn send(&mut self, msg: Vec<u8>)->Result<(),TokenRingError>{
+    fn send_with_priority(&mut self, msg: Vec<u8>, prioritice: bool)->Result<(),TokenRingError>{
         if let Err(error) = self.message_window.send_to_next_peer(msg){
             match error{
-                TokenRingError::ErrorWindowFull => self.messages_to_send.push_back(msg), 
+                TokenRingError::ErrorWindowFull => {
+                    if prioritice{
+                        self.messages_to_send.push_front(msg);
+                    }else {
+                        self.messages_to_send.push_back(msg);
+                    }
+                }
                 _ => return Err(error),
             }
         }
         Ok(())
     }
+    
+    fn send(&mut self, msg: Vec<u8>)->Result<(),TokenRingError>{
+        self.send_with_priority(msg, false)
+    }
 
     fn handle_timeout(&mut self) -> Result<(),TokenRingError>{
-        if let Err(error) = self.message_window.handle_timeout(){
-            match error{
-                TokenRingError::ErrorTimedOutTooManyTimes => self.handle_next_peer_disconection(),
-                _=> return Err(error),
+        match self.message_window.handle_timeout(){
+            Ok(()) => Ok(()),
+            Err(error) => {
+                match error{
+                    TokenRingError::ErrorTimedOutTooManyTimes => self.handle_next_peer_disconection(),
+                    _=> Err(error),
+                }
             }
         }
-        Ok(())
+
     }
 
     fn delete_peer_from_topology(&mut self) -> Result<SocketAddr, TokenRingError>{
@@ -103,12 +116,11 @@ impl TokenRingSender {
     }
 
     fn handle_next_peer_disconection(&mut self) -> Result<(),TokenRingError>{
-        self.delete_peer_from_topology()?;
-        //buscar quien es el proximo peer
-        //sacar el peer de la tabla
-        //crear mensaje de desconexion de peer
-        //mandarle a la ventana que tiene que cambiar de peer (cambio de IP), 
-        // y reenviar todo priorizando el mensaje de desconexion (para entrar a la ventana)
+        let next_addr = self.delete_peer_from_topology()?;
+        //crear mensaje de desconexion de peer WIP
+        //self.send_with_priority(msg, true)
+        self.message_window.change_peer(next_addr);
+        Ok(())
     }
 }
 
@@ -261,6 +273,43 @@ impl Window{
         final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
         self.final_times.push_back(final_time);
 
+        Ok(())
+    }
+    
+    fn change_peer(&mut self, next_peer: SocketAddr) -> Result<(), TokenRingError>{
+        self.next_peer = next_peer;
+        self.resend_all()
+    }
+    
+    fn get_min_message_id(&mut self) -> Option<u8>{
+        let mut ids: Vec<u8> = self.final_times.iter().map(|final_time| final_time.id ).collect();
+        if ids.contains(&u8::MAX){
+            ids.iter_mut().map(|id| {
+                if *id < u8::MAX - self.window_size{
+                    *id = u8::MAX;
+                };
+                id
+            });
+        };        
+
+        ids.into_iter().min()
+    }
+
+    fn resend_all(&mut self) -> Result<(), TokenRingError>{
+        let messages = self.messages;
+        let final_time = self.final_times;
+
+        self.next_id = match self.get_min_message_id(){
+            Some(next_id) => next_id,
+            None => return Ok(()),
+        };
+        self.messages = HashMap::new();
+        self.final_times = VecDeque::new();
+
+        for final_time in final_time{
+            let msg = messages[&final_time.id];
+            self.send_to_next_peer(msg)?
+        }
         Ok(())
     }
 }
