@@ -6,7 +6,8 @@ use std::collections::{VecDeque, HashMap, BinaryHeap};
 use std::time::{Instant, Duration};
 use chrono::Utc;
 
-use crate::token_ring_messages::RingMessageType;
+use crate::messages;
+use crate::token_ring_messages::{RingMessageType, RingMessage, RingMessageHeader, RingMessages, MsgId};
 
 const WINDOW_SIZE: u8 = 15;
 const PEER_TIMEOUT_MS: i64 = 100;
@@ -25,9 +26,10 @@ struct TokenRingReceiver{
 }
 
 struct TokenRingSender{
+    node_id: u16,
     message_window: Window,
-    messages_to_send: VecDeque<Vec<u8>>,
-    message_receiver: Receiver<(Vec<u8>,RingMessageType)>,
+    messages_to_send: VecDeque<RingMessage>,
+    message_receiver: Receiver<RingMessage>,
     ring_topology: SharedRingTopology,
     ring_addresses: SharedRingAddresses 
 }
@@ -42,16 +44,17 @@ enum TokenRingError{
 }
 
 impl TokenRingSender {
-    fn new(rx: Receiver<(Vec<u8>, RingMessageType)>, ring_topology: SharedRingTopology, ring_addresses: SharedRingAddresses,socket: UdpSocket, initial_next_peer_addr: SocketAddr) -> TokenRingSender {
+    fn new(node_id: u16, rx: Receiver<RingMessage>, ring_topology: SharedRingTopology, ring_addresses: SharedRingAddresses,socket: UdpSocket, initial_next_peer_addr: SocketAddr) -> TokenRingSender {
         TokenRingSender {
-            message_window: Window::new(WINDOW_SIZE,socket, initial_next_peer_addr),
+            node_id,
+            message_window: Window::new(node_id, WINDOW_SIZE,socket, initial_next_peer_addr),
             messages_to_send: VecDeque::new(),
             message_receiver: rx,
             ring_topology,
             ring_addresses}
     }
 
-    fn recv_until_smallest_timeout(&self)->Result<(Vec<u8>, RingMessageType), TokenRingError>{
+    fn recv_until_smallest_timeout(&self) -> Result<RingMessage, TokenRingError>{
         match self.message_window.smallest_timeout(){
             Some(timeout) => self.message_receiver.recv_timeout(timeout).map_err(|error|
                 match error{
@@ -63,13 +66,13 @@ impl TokenRingSender {
         }
     }
 
-    fn acknowledge_msg(&mut self, msg: Vec<u8>)-> Option<Vec<u8>>{
-        self.message_window.acknowledge_msg(msg);
+    fn acknowledge_msg(&mut self, msg: RingMessage)-> Option<RingMessage>{
+        self.message_window.acknowledge_msg(msg.header);
         self.messages_to_send.pop_front()
     }
 
-    fn send_with_priority(&mut self, msg: Vec<u8>, prioritice: bool)->Result<(),TokenRingError>{
-        if let Err(error) = self.message_window.send_to_next_peer(msg){
+    fn send_with_priority(&mut self, msg: RingMessage, prioritice: bool)->Result<(),TokenRingError>{
+        if let Err(error) = self.message_window.send_to_next_peer(msg.clone()){
             match error{
                 TokenRingError::ErrorWindowFull => {
                     if prioritice{
@@ -84,7 +87,7 @@ impl TokenRingSender {
         Ok(())
     }
     
-    fn send(&mut self, msg: Vec<u8>)->Result<(),TokenRingError>{
+    fn send(&mut self, msg: RingMessage)->Result<(),TokenRingError>{
         self.send_with_priority(msg, false)
     }
 
@@ -126,16 +129,15 @@ impl TokenRingSender {
 
 
 
-fn run_sender(rx: Receiver<(Vec<u8>,RingMessageType)>, ring_topology: SharedRingTopology, ring_addr: SharedRingAddresses, socket: UdpSocket, initial_next_peer_addr: SocketAddr)->Result<(),TokenRingError>{
-    let mut sender = TokenRingSender::new(rx, ring_topology, ring_addr, socket, initial_next_peer_addr);
+fn run_sender(node_id: u16, rx: Receiver<RingMessage>, ring_topology: SharedRingTopology, ring_addr: SharedRingAddresses, socket: UdpSocket, initial_next_peer_addr: SocketAddr)->Result<(),TokenRingError>{
+    let mut sender = TokenRingSender::new(node_id, rx, ring_topology, ring_addr, socket, initial_next_peer_addr);
     //sender.message_receiver.recv_timeout(timeout);
     loop{
         let msg = sender.recv_until_smallest_timeout();
             //fijarse si termino (me mato)
             match msg{
-                Ok((msg, msg_type)) => {
- 
-                    let msg = match msg_type{
+                Ok(msg) => {
+                    let msg = match msg.header.msg_type{
                         RingMessageType::Ack => sender.acknowledge_msg(msg),
                         _ => Some(msg),
                     };
@@ -144,7 +146,7 @@ fn run_sender(rx: Receiver<(Vec<u8>,RingMessageType)>, ring_topology: SharedRing
                     }
                 }
                 Err(error) => match error{
-                    TokenRingError::ErrorTimeOut => sender.handle_timeout(),
+                    TokenRingError::ErrorTimeOut => sender.handle_timeout()?,
                     _ => return Err(error),
                 },
             }
@@ -159,15 +161,15 @@ fn run_sender(rx: Receiver<(Vec<u8>,RingMessageType)>, ring_topology: SharedRing
 struct FinalTime{
     time: i64,
     amount_of_timeouts: u8,
-    id: u8
+    id: MsgId
 }
 
 impl FinalTime{
-    fn new(time:i64, id: u8)->FinalTime{
-        FinalTime {time: time, amount_of_timeouts: 0,id}
+    fn new(time:i64, id: MsgId)->FinalTime{
+        FinalTime {time, amount_of_timeouts: 0,id}
     }
 
-    fn from_timeout(timeout:i64, id:u8)->FinalTime{
+    fn from_timeout(timeout:i64, id:MsgId)->FinalTime{
         FinalTime::new(Utc::now().timestamp_millis() + timeout, id)
     }
 
@@ -202,8 +204,9 @@ impl PartialOrd for FinalTime{
 
 
 struct  Window{
+    node_id: u16,
     window_size: u8,
-    messages: HashMap<u8,Vec<u8>>,
+    messages: HashMap<MsgId,RingMessage>,
     final_times: VecDeque<FinalTime>,
     next_id: u8,
     socket: UdpSocket,
@@ -211,8 +214,8 @@ struct  Window{
 }
 
 impl Window{
-    fn new(window_size:u8, socket: UdpSocket, next_peer: SocketAddr)->Window{
-        Window { window_size, messages: HashMap::new(), final_times: VecDeque::new(),next_id: 0, socket, next_peer}
+    fn new(node_id: u16, window_size:u8, socket: UdpSocket, next_peer: SocketAddr)->Window{
+        Window {node_id, window_size, messages: HashMap::new(), final_times: VecDeque::new(),next_id: 0, socket, next_peer}
     }
 
     fn smallest_timeout(&self)->Option<Duration>{
@@ -225,14 +228,17 @@ impl Window{
         Some(Duration::from_millis(time_out))
     }
 
-    fn send_to_next_peer(&mut self, mut msg: Vec<u8>)->Result<(), TokenRingError>{
+    fn send_to_next_peer(&mut self, mut msg: RingMessage)->Result<(), TokenRingError>{
         if self.messages.len() >= self.window_size as usize{
             return Err(TokenRingError::ErrorWindowFull)
         }
-        msg[0] = self.next_id;
-        self.socket.send_to(&msg, self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
-        self.messages.insert(self.next_id, msg);
-        self.final_times.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS, self.next_id));
+        if msg.header.is_from_node(self.node_id){
+            msg.header.id.seq_num = self.next_id;
+        }
+        self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
+        self.final_times.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS, msg.header.id));
+        self.messages.insert(msg.header.id, msg);
+        
         if self.next_id == u8::MAX{
             self.next_id = 0;
         }else{
@@ -241,14 +247,14 @@ impl Window{
         Ok(())
     }
 
-    fn acknowledge_msg(&mut self, msg: Vec<u8>){
-        if self.messages.remove(&msg[0]).is_some(){
-            self.remove_final_time(&msg[0])
+    fn acknowledge_msg(&mut self, msg: RingMessageHeader){
+        if self.messages.remove(&msg.id).is_some(){
+            self.remove_final_time(&msg.id)
         }
     }
 
-    fn remove_final_time(&mut self, msg_id: &u8){
-        let position = self.final_times.iter().position(|&time| time.id == *msg_id);
+    fn remove_final_time(&mut self, id: &MsgId){
+        let position = self.final_times.iter().position(|time| time.id == *id);
         if let Some(position) = position{
             self.final_times.remove(position);
         }
@@ -268,10 +274,12 @@ impl Window{
         if final_time.amount_of_timeouts >= MAX_PEER_TIMEOUT{
             return Err(TokenRingError::ErrorTimedOutTooManyTimes)
         }
-        let msg = self.messages[&self.final_times[0].id];
-        self.socket.send_to(&msg, self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
-        final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
-        self.final_times.push_back(final_time);
+        
+        if let Some(msg) = self.messages.get(&self.final_times[0].id){
+            self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
+            final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
+            self.final_times.push_back(final_time);
+        }
 
         Ok(())
     }
@@ -280,34 +288,17 @@ impl Window{
         self.next_peer = next_peer;
         self.resend_all()
     }
-    
-    fn get_min_message_id(&mut self) -> Option<u8>{
-        let mut ids: Vec<u8> = self.final_times.iter().map(|final_time| final_time.id ).collect();
-        if ids.contains(&u8::MAX){
-            ids.iter_mut().map(|id| {
-                if *id < u8::MAX - self.window_size{
-                    *id = u8::MAX;
-                };
-                id
-            });
-        };        
-
-        ids.into_iter().min()
-    }
 
     fn resend_all(&mut self) -> Result<(), TokenRingError>{
-        let messages = self.messages;
-        let final_time = self.final_times;
+        let mut messages = Vec::new();
+        
+        while let Some(final_time) = self.final_times.pop_front(){
+            if let Some(msg) = self.messages.remove(&final_time.id){
+                messages.push(msg);
+            }
+        }
 
-        self.next_id = match self.get_min_message_id(){
-            Some(next_id) => next_id,
-            None => return Ok(()),
-        };
-        self.messages = HashMap::new();
-        self.final_times = VecDeque::new();
-
-        for final_time in final_time{
-            let msg = messages[&final_time.id];
+        for msg in messages{
             self.send_to_next_peer(msg)?
         }
         Ok(())
