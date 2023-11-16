@@ -1,3 +1,4 @@
+//use std::ops::IndexMut;
 
 pub trait RingMessages{
     fn to_bytes(&self)-> Vec<u8>;
@@ -25,6 +26,10 @@ impl RingMessageHeader{
     pub fn is_from_node(&self, node_id:u16)-> bool{
         self.id.is_from_node(node_id)
     }
+
+    pub fn recently_created_by(&self, node_id:u16) -> bool {
+        self.is_from_node(node_id) && self.ammount_of_signatures == 1
+    } 
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy)]

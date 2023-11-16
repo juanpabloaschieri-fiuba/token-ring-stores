@@ -15,7 +15,6 @@ const MAX_PEER_TIMEOUT : u8 = 4;
 
 type SharedRingAddresses = Arc<Mutex<HashMap<u16, SocketAddr>>>;
 type SharedRingTopology = Arc<Mutex<VecDeque<u16>>>;
-//p los mensajes a cuidar compartidos entre el sender y el receiver
 
 struct TokenRingNode{
     
@@ -31,6 +30,8 @@ struct TokenRingSender{
     message_window: Window,
     messages_to_send: VecDeque<RingMessage>,
     message_receiver: Receiver<RingMessage>,
+    created_messages: HashMap<MsgId, RingMessage>,
+    final_times_created_messages: VecDeque<FinalTime>,
     ring_topology: SharedRingTopology,
     ring_addresses: SharedRingAddresses 
 }
@@ -51,13 +52,27 @@ impl TokenRingSender {
             message_window: Window::new(node_id, WINDOW_SIZE,socket, initial_next_peer_addr),
             messages_to_send: VecDeque::new(),
             message_receiver: rx,
+            created_messages: HashMap::new(),
+            final_times_created_messages: VecDeque::new(),
             ring_topology,
-            ring_addresses}
+            ring_addresses
+        }
+    }
+
+    fn smallest_timeout(&self) -> Option<Duration> {
+        let win_timeout = self.message_window.smallest_timeout();
+        let creted_messages_timeout = smallest_timeout(&self.final_times_created_messages);
+        if win_timeout.is_none() && creted_messages_timeout.is_none(){
+            return None;
+        }
+        let win_timeout = win_timeout.unwrap_or(Duration::MAX);
+        let created_messages_timeout = creted_messages_timeout.unwrap_or(Duration::MAX);
+        Some(win_timeout.min(created_messages_timeout))
     }
 
     fn recv_until_smallest_timeout(&self) -> Result<RingMessage, TokenRingError>{
         //p obtener el minimo entre el timeout de la window y el de los mensajes a cargo 
-        match self.message_window.smallest_timeout(){
+        match self.smallest_timeout(){
             Some(timeout) => self.message_receiver.recv_timeout(timeout).map_err(|error|
                 match error{
                     RecvTimeoutError::Timeout => TokenRingError::ErrorTimeOut,
@@ -73,20 +88,33 @@ impl TokenRingSender {
         self.messages_to_send.pop_front()
     }
 
+    fn add_created_message(&mut self, msg: RingMessage) -> Result<(), TokenRingError>{
+        if !msg.header.recently_created_by(self.node_id){
+            return Ok(());
+        }
+        let nodes_in_ring= match self.ring_topology.lock(){
+            Ok(topology) => topology.len() as i64,
+            Err(_) => return Err(TokenRingError::ErrorSharingData),
+        };
+        self.final_times_created_messages.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS * nodes_in_ring * 2, msg.header.id));
+        self.created_messages.insert(msg.header.id, msg);
+        Ok(())
+    }
+
     fn send_with_priority(&mut self, msg: RingMessage, prioritice: bool)->Result<(),TokenRingError>{
-        if let Err(error) = self.message_window.send_to_next_peer(msg.clone()){
-            match error{
+        match self.message_window.send_to_next_peer(msg.clone()){
+            Ok(_) => self.add_created_message(msg)?,
+            Err(error) => match error{
                 TokenRingError::ErrorWindowFull => {
                     if prioritice{
                         self.messages_to_send.push_front(msg);
-                    }else {
+                    } else {
                         self.messages_to_send.push_back(msg);
                     }
                 }
                 _ => return Err(error),
-            }
+            },
         }
-        //p fijarse si es nuestro el mensaje, y agregarlo a mensajes a cuidar
         Ok(())
     }
     
@@ -94,18 +122,34 @@ impl TokenRingSender {
         self.send_with_priority(msg, false)
     }
 
+    fn handle_created_messages_timeout(&mut self)-> Result<(), TokenRingError>{
+        let final_time = match self.final_times_created_messages.pop_front(){
+            Some(final_time) => {
+                if final_time.remaining_time() > 0{
+                    self.final_times_created_messages.push_front(final_time);
+                    return Ok(());
+                };
+                final_time},
+            None => return Ok(())
+        };
+        
+        if let Some(msg) = self.created_messages.remove(&final_time.id){
+            self.send_with_priority(msg, true)?;
+        }
+
+        Ok(())
+    }
+
     fn handle_timeout(&mut self) -> Result<(),TokenRingError>{
-        //p hay que fijarse cual de los dos timeouteo, y en funcion de eso, nadelear como corresponda.
-        match self.message_window.handle_timeout(){
-            Ok(()) => Ok(()),
-            Err(error) => {
-                match error{
-                    TokenRingError::ErrorTimedOutTooManyTimes => self.handle_next_peer_disconection(),
-                    _=> Err(error),
-                }
+        //p hay que fijarse cual de los dos timeouteo, y en funcion de eso, nadelear como corresponda.  
+        if let Err(error) = self.message_window.handle_timeout(){
+            match error{
+                TokenRingError::ErrorTimedOutTooManyTimes => return self.handle_next_peer_disconection(),
+                _=> return Err(error),
             }
         }
 
+        self.handle_created_messages_timeout()
     }
 
     fn delete_peer_from_topology(&mut self) -> Result<SocketAddr, TokenRingError>{
@@ -207,7 +251,7 @@ impl PartialOrd for FinalTime{
 }
 
 
-struct  Window{
+struct Window{
     node_id: u16,
     window_size: u8,
     messages: HashMap<MsgId,RingMessage>,
@@ -223,13 +267,7 @@ impl Window{
     }
 
     fn smallest_timeout(&self)->Option<Duration>{
-        if self.final_times.is_empty(){
-            return None
-        }
-        
-        let time_out = self.final_times[0].time - Utc::now().timestamp_millis();
-        let time_out = time_out.max(0) as u64;
-        Some(Duration::from_millis(time_out))
+        smallest_timeout(&self.final_times)
     }
 
     fn send_to_next_peer(&mut self, mut msg: RingMessage)->Result<(), TokenRingError>{
@@ -267,7 +305,8 @@ impl Window{
     fn handle_timeout(&mut self)->Result<(), TokenRingError>{
         let mut final_time = match self.final_times.pop_front(){
             Some(final_time) => {
-                if self.final_times[0].remaining_time() > 0{
+                if final_time.remaining_time() > 0{
+                    self.final_times.push_front(final_time);
                     return Ok(());
                 };
                 final_time},
@@ -279,7 +318,7 @@ impl Window{
             return Err(TokenRingError::ErrorTimedOutTooManyTimes)
         }
         
-        if let Some(msg) = self.messages.get(&self.final_times[0].id){
+        if let Some(msg) = self.messages.get(&final_time.id){
             self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
             final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
             self.final_times.push_back(final_time);
@@ -307,4 +346,14 @@ impl Window{
         }
         Ok(())
     }
+}
+
+fn smallest_timeout(final_times: &VecDeque<FinalTime>)->Option<Duration>{
+    if final_times.is_empty(){
+        return None
+    }
+    
+    let time_out = final_times[0].time - Utc::now().timestamp_millis();
+    let time_out = time_out.max(0) as u64;
+    Some(Duration::from_millis(time_out))
 }
