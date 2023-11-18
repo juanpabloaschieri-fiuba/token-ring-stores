@@ -2,7 +2,7 @@
 
 pub trait RingMessages{
     fn to_bytes(&self)-> Vec<u8>;
-    fn from_bytes(&self) -> Self;
+    fn from_bytes(bytes :Vec<u8>) -> Self;
 }
 
 #[derive(Clone)]
@@ -79,7 +79,7 @@ impl RingMessages for RingMessageHeader{
         bytes
     }
 
-    fn from_bytes(&self) -> Self {
+    fn from_bytes(bytes :Vec<u8>) -> Self {
         todo!()
     }
 }
@@ -101,7 +101,7 @@ impl RingMessages for RingMessage{
         bytes
     }
 
-    fn from_bytes(&self) -> Self {
+    fn from_bytes(bytes :Vec<u8>) -> Self {
         todo!()
     }
 }

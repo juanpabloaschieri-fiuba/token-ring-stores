@@ -36,7 +36,7 @@ struct TokenRingSender{
     ring_addresses: SharedRingAddresses 
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum TokenRingError{
     ErrorTimeOut,
     ErrorDisconnected,
@@ -97,7 +97,7 @@ impl TokenRingSender {
             Ok(topology) => topology.len() as i64,
             Err(_) => return Err(TokenRingError::ErrorSharingData),
         };
-        self.final_times_created_messages.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS * nodes_in_ring * 2, msg.header.id));
+        self.final_times_created_messages.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS * nodes_in_ring * 3, msg.header.id));
         self.created_messages.insert(msg.header.id, msg);
         Ok(())
     }
@@ -142,6 +142,7 @@ impl TokenRingSender {
     }
 
     fn handle_timeout(&mut self) -> Result<(),TokenRingError>{
+    
         //p hay que fijarse cual de los dos timeouteo, y en funcion de eso, nadelear como corresponda.  
         if let Err(error) = self.message_window.handle_timeout(){
             match error{
@@ -149,26 +150,27 @@ impl TokenRingSender {
                 _=> return Err(error),
             }
         }
-
+        
         self.handle_created_messages_timeout()
     }
 
     fn delete_peer_from_topology(&mut self) -> Result<SocketAddr, TokenRingError>{
+        println!("entre al delete");
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         
-        let removed_id = ring_topology.pop_front().ok_or(TokenRingError::ErrorSharingData)?;
-        ring_addresses.remove(&removed_id).ok_or(TokenRingError::ErrorSharingData)?;
+        let removed_id = ring_topology.pop_front().ok_or(TokenRingError::ErrorDisconnected)?;
+        ring_addresses.remove(&removed_id).ok_or(TokenRingError::ErrorDisconnected)?;
 
-        let next_id = ring_topology.front().ok_or(TokenRingError::ErrorSharingData)?;
-        let addr = ring_addresses.get(next_id).ok_or(TokenRingError::ErrorSharingData)?.clone();
-        
+        let next_id = ring_topology.front().ok_or(TokenRingError::ErrorDisconnected)?;
+        let addr = ring_addresses.get(next_id).ok_or(TokenRingError::ErrorDisconnected)?.clone();
+        println!("al salir del delete{:?}", addr);
         Ok(addr)
-
     }
 
     fn handle_next_peer_disconection(&mut self) -> Result<(),TokenRingError>{
         let next_addr = self.delete_peer_from_topology()?;
+        
         //crear mensaje de desconexion de peer WIP
         //self.send_with_priority(msg, true)
         self.message_window.change_peer(next_addr);
@@ -177,6 +179,10 @@ impl TokenRingSender {
 
     fn remove_created_message(&mut self, msg_id: MsgId){
         self.created_messages.remove(&msg_id);
+        let position = self.final_times_created_messages.iter().position(|time| time.id == msg_id);
+        if let Some(position) = position{
+            self.final_times_created_messages.remove(position);
+        }
     }
 
     fn process_msg(&mut self, msg: RingMessage)-> Result<(),TokenRingError>{
@@ -345,6 +351,7 @@ impl Window{
         final_time.amount_of_timeouts +=1;
         if final_time.amount_of_timeouts >= MAX_PEER_TIMEOUT{
             self.final_times.push_front(final_time);
+            
             return Err(TokenRingError::ErrorTimedOutTooManyTimes)
         }
         
@@ -353,7 +360,7 @@ impl Window{
             final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
             self.final_times.push_back(final_time);
         }
-
+        
         Ok(())
     }
     
@@ -399,10 +406,14 @@ mod test {
         let mut ring_topology = VecDeque::new();
         let mut ring_addresses = HashMap::new();
         for i in 0..amount_of_peers{
-            ring_topology.push_front(i+1);
+            ring_topology.push_back(i+1);
             let addr = SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), port+i+1);
             ring_addresses.insert(i+1, addr);
         }
+        let addr = SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), port);
+        ring_topology.push_back(0);
+        ring_addresses.insert(0, addr);
+
         let ring_topology = Arc::new(Mutex::from(ring_topology));
         let ring_addresses = Arc::new(Mutex::from(ring_addresses));
         let socket = UdpSocket::bind(SocketAddr::new(IpAddr::from_str("127.0.0.1").unwrap(), port)).unwrap();
@@ -414,11 +425,11 @@ mod test {
         (token_ring_sender, tx)
     }
 
-    fn create_n_messages(amount_of_msg: u8) -> Vec<RingMessage>{
+    fn create_n_messages_from(amount_of_msg: u8, node_id: u16) -> Vec<RingMessage>{
         let mut messages: Vec<RingMessage> = vec![];
         
         for i in 0..amount_of_msg{
-            let msg_header = RingMessageHeader::new(MsgId::new(0,u8::MAX), RingMessageType::NewNode, 0);
+            let msg_header = RingMessageHeader::new(MsgId::new(node_id,u8::MAX), RingMessageType::NewNode, 0);
             let mut msg = RingMessage::new(msg_header, vec![0,1,2,3,4,5]);
             messages.push(msg)
         }
@@ -435,7 +446,7 @@ mod test {
     #[test]
     fn test_1_when_sending_messages_they_are_added_to_the_window()->Result<(), TokenRingError>{
         let (mut tr_sender, mut msg_sender) = create_token_ring_sender(3, 11000);
-        let msg = create_n_messages(1).remove(0);
+        let msg = create_n_messages_from(1,0).remove(0);
 
         assert_eq!(tr_sender.message_window.messages.len(), 0);
         tr_sender.send(msg)?;
@@ -446,7 +457,7 @@ mod test {
     #[test]
     fn test_2_send_message_to_next_peer()->Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,12000);
-        let mut msg = create_n_messages(1).remove(0);
+        let mut msg = create_n_messages_from(1,0).remove(0);
         let socket = UdpSocket::bind("127.0.0.1:12001").unwrap();
         
         tr_sender.send(msg.clone())?;
@@ -462,7 +473,7 @@ mod test {
     #[test]
     fn test_3_sending_messages_with_a_full_window_does_not_send_it_and_adds_it_to_the_queue()->Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,13000);
-        let msg = create_n_messages(1).remove(0);
+        let msg = create_n_messages_from(1,0).remove(0);
         let socket = UdpSocket::bind("127.0.0.1:13001").unwrap();
         socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
 
@@ -483,7 +494,7 @@ mod test {
     #[test]
     fn test_4_sending_multiple_messages_increments_id()->Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3, 14000);
-        let messages = create_n_messages(5);
+        let messages = create_n_messages_from(5,0);
         
         for msg in messages{
             tr_sender.send(msg)?;
@@ -499,7 +510,7 @@ mod test {
     #[test]
     fn test_5_acks_remove_from_window_and_sends_queued_messages() -> Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,15000);
-        let msg = create_n_messages(1).remove(0);
+        let msg = create_n_messages_from(1,0).remove(0);
         let socket = UdpSocket::bind("127.0.0.1:15001").unwrap();
         socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
 
@@ -529,10 +540,10 @@ mod test {
     #[test]
     fn test_6_when_a_message_does_a_peer_time_out_it_is_sent_again() -> Result<(), TokenRingError> {
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3, 16000);
-        let msg = create_n_messages(1).remove(0);
+        let msg = create_n_messages_from(1,0).remove(0);
         let socket = UdpSocket::bind("127.0.0.1:16001").unwrap();
         socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
-
+        
         tr_sender.send(msg.clone())?;
         tr_sender.send(msg)?;
         tr_sender.rcv_and_procces()?;
@@ -553,25 +564,32 @@ mod test {
 
     #[test]
     fn test_7_when_a_message_times_out_too_many_times_the_next_peer_is_changed_and_messages_resended() -> Result<(), TokenRingError> {
-        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3, 17000);
-        let msg = create_n_messages(1).remove(0);
-        let socket = UdpSocket::bind("127.0.0.1:17002").unwrap();
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(10, 17000);
+        let msg = create_n_messages_from(1,0).remove(0);
+        let first_socket = UdpSocket::bind("127.0.0.1:17001").unwrap();
+        let second_socket = UdpSocket::bind("127.0.0.1:17002").unwrap();
+        first_socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        second_socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
         tr_sender.send(msg.clone())?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
-        println!("{}", tr_sender.message_window.final_times[0].amount_of_timeouts);
+        tr_sender.send(msg.clone())?;
+        
+        for i in 0..2*(MAX_PEER_TIMEOUT-1)+1{
+            println!("{i}");
+            tr_sender.rcv_and_procces()?;
+        }
+        
+        for _i in 0..2*MAX_PEER_TIMEOUT{
+            receive_udp_package_from(&first_socket).unwrap();
+        }
+        assert!(receive_udp_package_from(&first_socket).is_err());
+        
+        for _i in 0..2{
+            receive_udp_package_from(&second_socket).unwrap();
+        }
+        assert!(receive_udp_package_from(&second_socket).is_err());
+
+        
+        assert_eq!(tr_sender.message_window.next_peer, SocketAddr::from_str("127.0.0.1:17002").unwrap());
         Ok(())
     }
 
@@ -580,8 +598,7 @@ mod test {
     #[test]
     fn test_8_send_message_adds_it_to_the_queue_of_created_messages() -> Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,18000);
-        let msg = create_n_messages(1).remove(0);
-        let socket = UdpSocket::bind("127.0.0.1:18001").unwrap();
+        let msg = create_n_messages_from(1,0).remove(0);
 
         for _i in 0..WINDOW_SIZE+1{
             tr_sender.send(msg.clone())?;
@@ -594,10 +611,24 @@ mod test {
     }
 
     #[test]
-    fn test_9_receive_own_messages_removes_them_from_the_queue() -> Result<(), TokenRingError>{
+
+    fn test_9_resending_messages_doesnt_add_to_created_messages() -> Result<(), TokenRingError>{
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,19000);
-        let mut msg = create_n_messages(5);
-        let socket = UdpSocket::bind("127.0.0.1:19001").unwrap();
+        let msg = create_n_messages_from(1,2).remove(0);
+        
+        tr_sender.send(msg)?;
+
+        assert!(tr_sender.created_messages.is_empty());
+        assert!(tr_sender.final_times_created_messages.is_empty());
+        assert!(!tr_sender.message_window.messages.is_empty());
+        assert!(!tr_sender.message_window.final_times.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_10_receive_own_messages_removes_them_from_the_queue() -> Result<(), TokenRingError>{
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,20000);
+        let mut msg = create_n_messages_from(5,0);
 
         for i in 0..msg.len(){
             tr_sender.send(msg[i].clone())?;
@@ -608,12 +639,67 @@ mod test {
             msg[i].header.id.seq_num = i as u8;
             tr_sender.process_msg(msg[i].clone())?;
         }
-
+        
         assert_eq!(tr_sender.created_messages.len(), 0);
-        assert_eq!(tr_sender.final_times_created_messages.len(),5);
+        assert_eq!(tr_sender.final_times_created_messages.len(),0);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_11_timeout_of_created_and_sended_msg() -> Result<(), TokenRingError>{
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(3,21000);
+        let msg = create_n_messages_from(1,0).remove(0);
+        let socket = UdpSocket::bind("127.0.0.1:21001").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
 
+        tr_sender.send(msg)?;
+        tr_sender.acknowledge_msg(RingMessage::new_ack(MsgId::new(0, 0)));
+
+        tr_sender.rcv_and_procces()?;
+        receive_udp_package_from(&socket).unwrap();
+        receive_udp_package_from(&socket).unwrap();
+        assert!(receive_udp_package_from(&socket).is_err());
+        Ok(())
+    }
+    #[test]
+    fn test_12_receive_msg_from_myself_in_disconected_topology() -> Result<(), TokenRingError>{
+        let (mut tr_sender,  msg_sender) = create_token_ring_sender(0,22000);
+        let mut msg = create_n_messages_from(1,0).remove(0);
+        tr_sender.message_window.socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        
+        tr_sender.send(msg.clone())?;
+
+        msg.sign(0);
+        msg.header.id.seq_num = 0;
+        msg_sender.send(RingMessage::new_ack(MsgId::new(0, 0))).unwrap();
+        msg_sender.send(msg).unwrap();
+        
+        tr_sender.rcv_and_procces()?;
+        tr_sender.rcv_and_procces()?;
+        receive_udp_package_from(&tr_sender.message_window.socket).unwrap();
+        assert!(receive_udp_package_from(&tr_sender.message_window.socket).is_err());
+        Ok(())
+    }
+    
+    #[test]
+    fn test_13_create_disconected_topology_by_pointing_to_yourself()-> Result<(), TokenRingError>{
+        let (mut tr_sender,  msg_sender) = create_token_ring_sender(1,23000);
+        let mut msg = create_n_messages_from(1,0).remove(0);
+        tr_sender.message_window.socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        tr_sender.send(msg)?;
+        
+        for i in 0..MAX_PEER_TIMEOUT{
+            println!("{i}");
+            tr_sender.rcv_and_procces()?;
+        }
+        
+        println!("{:?}",tr_sender.message_window.next_peer);
+        assert_eq!(tr_sender.message_window.next_peer,SocketAddr::from_str("127.0.0.1:23000").unwrap());
+        receive_udp_package_from(&tr_sender.message_window.socket).unwrap();
+        assert!(receive_udp_package_from(&tr_sender.message_window.socket).is_err());
         Ok(())
     }
 
-    // TEST timeout con created
+    //test del mensaje reenviado por timeout desp de disconnect (ver cant de firmas)
 }
