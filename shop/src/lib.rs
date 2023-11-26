@@ -1,8 +1,10 @@
 pub mod point;
 pub mod shop;
-pub mod simulator_physical_requests;
+pub mod request_simulator;
 pub mod messages;
 pub mod ecomerce;
 pub mod delivery;
-pub mod token_ring;
+pub mod token_ring_sender;
 pub mod token_ring_messages;
+pub mod token_ring;
+pub mod token_ring_receiver;

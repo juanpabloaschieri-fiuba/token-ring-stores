@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use rand::prelude::*;
 use actix::{Actor, Context, Handler, System, Addr, Message,};
 
-const TIME_PER_DISTANCE_UNIT: f32 = 1.0; // WIP por que lo dejamos en 1?
+const TIME_PER_DISTANCE_UNIT: i32 = 1; // WIP por que lo dejamos en 1?
 const DROP_PROBABILITY: f32 = 0.1;
 
 
@@ -78,7 +78,8 @@ impl Delivery{
 
     fn wait_until_finish_or_new_delivery(&mut self)->Result<Option<DeliveryOrder>, DeliveryError>{
         if let Some(delivery_order) = self.ongoing_deliveries.peek(){
-            let timeout = Duration::from_secs_f64((delivery_order.time_to_arrive as f64) - self.starting_instant.elapsed().as_secs_f64());
+            let duration = ((delivery_order.time_to_arrive as f64) - self.starting_instant.elapsed().as_secs_f64()).max(0.0);
+            let timeout = Duration::from_secs_f64(duration);
             match self.receiver.recv_timeout(timeout){
                 Ok(request) => {
                     self.add_request(request);
