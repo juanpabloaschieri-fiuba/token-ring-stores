@@ -133,6 +133,7 @@ fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:S
                 TokenRingError::EndOfProgram => FinishStatus::GracefulFinish,
                 _ => FinishStatus::ErrorFinish(err),
             };
+            print(format!("Sender finished with: {:?}", res));
             break;
         }
     };

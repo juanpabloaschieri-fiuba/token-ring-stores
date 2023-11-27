@@ -140,22 +140,30 @@ impl TokenRingReceiver{
     }
 
     /// Initializes the node by receiving a NodeConnection message and sending it to the rest of the topology
-    fn initialize_node(&mut self, msg: NodeConnection)-> Result<RingMessage, TokenRingError>{
+    fn initialize_node(&mut self, msg: NodeConnection)-> Result<Vec<RingMessage>, TokenRingError>{
         let msg_clone = msg.clone();
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-        *ring_topology = msg.topology_ids;
-        let mut addresses = HashMap::new();
-        for (i, id) in ring_topology.iter().enumerate(){
-            addresses.insert(*id, msg.topology_addresses[i]);
+        if msg.amount_of_peers != 0{
+            *ring_topology = msg.topology_ids;
+            let mut addresses = HashMap::new();
+            for (i, id) in ring_topology.iter().enumerate(){
+                addresses.insert(*id, msg.topology_addresses[i]);
+            }
+            *ring_addresses = addresses;
+            self.node_id = *ring_topology.back().ok_or(TokenRingError::ErrorDisconnected)?;
+    
+            let confirm_msg = ConfirmConnection::new(MsgId::from_node(self.node_id), Vec::new(), self.node_id, ring_addresses[&ring_topology[ring_topology.len()-1]]);
+            
+            print(format!("Node with id: {} is ready", self.node_id));
+            Ok(vec![RingMessage::from_confirm_connection(confirm_msg)])
+        }else{
+            *ring_topology = VecDeque::from([0]);
+            *ring_addresses = HashMap::new();
+            ring_addresses.insert(0, msg.new_node_addr);
+            self.node_id = 0;
+            Ok(Vec::new())
         }
-        *ring_addresses = addresses;
-        self.node_id = *ring_topology.back().ok_or(TokenRingError::ErrorDisconnected)?;
-
-        let confirm_msg = ConfirmConnection::new(MsgId::from_node(self.node_id), Vec::new(), self.node_id, ring_addresses[&ring_topology[ring_topology.len()-1]]);
-        
-        print(format!("Node with id: {} is ready", self.node_id));
-        Ok(RingMessage::from_confirm_connection(confirm_msg))
     }
 
     /// Handles a NodeConnection message
@@ -167,7 +175,7 @@ impl TokenRingReceiver{
         };
         let local_address = self.socket.local_addr().map_err(|_| TokenRingError::ErrorSharingData)?;
         if  (local_address == connection_msg.new_node_addr) && (self.node_id == u16::MAX){
-            messages_to_send.push(self.initialize_node(connection_msg)?);
+            messages_to_send.extend(self.initialize_node(connection_msg)?);
             return Ok(messages_to_send);
         }
 
@@ -296,12 +304,12 @@ impl TokenRingReceiver{
             Ok(received) => match received{
                 Some((msg, addr)) => {
                     match msg.header.msg_type {
-                        RingMessageType::NodeDisconnected => {
-                            if !self.message_sent_from_inside_topolgy(&msg,addr)?{
-                                return Ok(())
-                            }
-                            (msg,addr)
-                        },
+                        //RingMessageType::NodeDisconnected => {
+                        //    if !self.message_sent_from_inside_topolgy(&msg,addr)?{
+                        //        return Ok(())
+                        //    }
+                        //    (msg,addr)
+                        //},
                         RingMessageType::EndOfProgram => return Err(TokenRingError::EndOfProgram),
                         _ => (msg,addr),
                     }
@@ -321,6 +329,9 @@ impl TokenRingReceiver{
     /// Removes a peer from the topology
     fn remove_peer_from_topology(&mut self, node_id:u16)->Result<(), TokenRingError>{
         println!("entre al delete");
+        if self.node_id == node_id{
+            return Ok(())
+        }
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
             

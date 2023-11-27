@@ -16,6 +16,9 @@ const WINDOW_SIZE: u8 = 15;
 const PEER_TIMEOUT_MS: i64 = 1000;
 const MAX_PEER_TIMEOUT : u8 = 4;
 
+static mut contador: i32 = 0;
+
+
 /// Struct that represents the Token Ring Sender to send messages in the Token Ring.
 ///
 /// # Attributes
@@ -180,10 +183,10 @@ impl TokenRingSender {
 
         let (disconected_peer_id, next_addr) = self.delete_peer_from_topology()?;
 
+        self.message_window.change_peer(next_addr)?;
         let node_disconection = NodeDisconnected::new(MsgId::from_node(self.message_window.node_id), Vec::new(), disconected_peer_id);
         let msg = RingMessage::from_node_disconected(node_disconection);
         self.send_with_priority(msg, true)?;
-        self.message_window.change_peer(next_addr)?;
 
         Ok(())
     }
@@ -197,14 +200,14 @@ impl TokenRingSender {
         }
         Ok(())
     }
-
+    
 
     /// Receives a RingMessage with the type NodeConnection and it updates the next peer of the window
     pub fn update_next_peer(&mut self, mut msg: RingMessage)->Result<Option<RingMessage>, TokenRingError>{
 
         let topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-
+        
         if self.message_window.node_id == u16::MAX{
             self.final_times_created_messages.retain(|final_time| final_time.id.node_id != u16::MAX);
             self.created_messages.remove_all_from(u16::MAX).map_err(|_| TokenRingError::ErrorSharingData)?;
@@ -784,10 +787,6 @@ pub mod test {
         for _i in 0..2*MAX_PEER_TIMEOUT{
             receive_udp_package_from(&first_socket).unwrap();
         }
-        let (package, _) = receive_udp_package_from(&first_socket).unwrap();
-        let msg = RingMessage::from_bytes(&package)?;
-        let node_disconected = NodeDisconnected::from_ring_message(msg)?;
-        assert_eq!(node_disconected.disconected_node,1);
 
         assert!(receive_udp_package_from(&first_socket).is_err());
 
