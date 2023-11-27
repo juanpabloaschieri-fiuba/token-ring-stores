@@ -293,15 +293,18 @@ impl TokenRingReceiver{
     /// Receives a message from the socket and handles it
     pub fn recv_and_handle(&mut self)->Result<(), TokenRingError>{
         let (mut msg, addr) = match self.recv_from(){
-
             Ok(received) => match received{
                 Some((msg, addr)) => {
-                    if !self.message_sent_from_inside_topolgy(&msg,addr)?{ 
-                        if msg.header.msg_type == RingMessageType::NodeDisconnected{
-                            return Ok(())
-                        }
+                    match msg.header.msg_type {
+                        RingMessageType::NodeDisconnected => {
+                            if !self.message_sent_from_inside_topolgy(&msg,addr)?{
+                                return Ok(())
+                            }
+                            (msg,addr)
+                        },
+                        RingMessageType::EndOfProgram => return Err(TokenRingError::EndOfProgram),
+                        _ => (msg,addr),
                     }
-                    (msg,addr)
                 },
                 None => return Ok(()),
             },
@@ -311,9 +314,8 @@ impl TokenRingReceiver{
             },
         };
 
-        self.handle_message(msg, addr);
-        Ok(())
-        
+        self.handle_message(msg, addr)
+
     }
 
     /// Removes a peer from the topology
@@ -327,6 +329,10 @@ impl TokenRingReceiver{
             ring_topology.remove(position);
         }
         Ok(())
+    }
+
+    pub fn signal_end_of_program_to_sender(self){
+        self.msg_sender.send(RingMessage::new_end_of_program());
     }
 }
 

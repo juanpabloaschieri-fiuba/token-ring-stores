@@ -29,7 +29,8 @@ pub enum RingMessageType {
     ConfirmConnection,
     SendAck,
     ReceivedAck,
-    SetConnectionStatus
+    SetConnectionStatus,
+    EndOfProgram
 }
 
 impl ByteConvertable for RingMessageType{
@@ -52,6 +53,7 @@ impl ByteConvertable for RingMessageType{
             5 => Ok(RingMessageType::SendAck),
             6 => Ok(RingMessageType::ReceivedAck),
             7 => Ok(RingMessageType::SetConnectionStatus),
+            8 => Ok(RingMessageType::EndOfProgram),
             _ => Err(TokenRingError::ErrorInvalidByteSequence),
         }
     }
@@ -245,6 +247,11 @@ impl RingMessage {
     /// Creates a new RingMessage that serves as an ack for the message with the given id
     pub fn new_ack(id:MsgId, msg_type: RingMessageType)-> Self{
         let header = RingMessageHeader::new(id, msg_type, 0, 0);
+        RingMessage { header, signatures: Vec::new(), payload: Vec::new() }
+    }
+
+    pub fn new_end_of_program()->RingMessage{
+        let header = RingMessageHeader::new(MsgId::default(), RingMessageType::EndOfProgram, 0, 0);
         RingMessage { header, signatures: Vec::new(), payload: Vec::new() }
     }
 

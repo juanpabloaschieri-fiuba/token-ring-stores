@@ -12,6 +12,7 @@ use colored::*;
 use crate::shop::{*, self};
 use crate::messages::*;
 use crate::point::*;
+use crate::token_ring::FinishStatus;
 use crate::token_ring_messages::{CoordinateRequest, MsgId, RingMessage, ByteConvertable};
 use std::sync::mpsc::{Sender, Receiver, self};
 ///13 //tiempo hasta pedido
@@ -47,8 +48,7 @@ impl SimulatedRequest{
     }
 
     fn handle(mut self, shop_addr: &Addr<Shop>, socket: &UdpSocket, ecommerce_socket_addr: &SocketAddr, finish_receiver: &Receiver<bool>)->Result<(),SimulationError>{
-        println!("WIP: Voy a dormir por: {:?}",self.delay);
-        //std::thread::sleep(self.delay);
+        println!("Simulator: Voy a dormir por: {:?}",self.delay);
         if let Ok(finish) = finish_receiver.recv_timeout(self.delay){
             return Err(SimulationError::EndOfSimulation)
         }
@@ -78,7 +78,6 @@ pub enum SimulationError {
 
 pub struct Simulator{
     handle: JoinHandle<Result<(), SimulationError>>,
-    //comunicar fin
     finish_sender: Sender<bool>
 }
 
@@ -90,12 +89,12 @@ impl Simulator{
     }
 
     pub fn stop(self) -> Result<(), SimulationError>{
-        self.finish_sender.send(true).map_err(|_| SimulationError::ErrorInCommunications)?;
+        let _ = self.finish_sender.send(true).map_err(|_| SimulationError::ErrorInCommunications);
         self.handle.join().map_err(|_| SimulationError::ErrorJoiningSimulationThread)?
     }
 }
 
-pub fn simulate(path:String, n: u16,shop_addr: Addr<Shop>, shop_location: Point, ecommerce_socket_addr: SocketAddr, finish_receiver: Receiver<bool>)-> Result<(), SimulationError>{
+pub fn simulate(path:String, n: u16,shop_addr: Addr<Shop>, shop_location: Point, ecommerce_socket_addr: SocketAddr, finish_receiver: Receiver<bool>) -> Result<(), SimulationError> {
     let orders = File::open(path).map_err(|_| SimulationError::FileError(FileError::ErrorOpeningFile))?;
     let ip = IpAddr::from_str("127.0.0.2").map_err(|_| SimulationError::ErrorSettingAddr)?;
     let simulation_addr = SocketAddr::new(ip, PORT + n);

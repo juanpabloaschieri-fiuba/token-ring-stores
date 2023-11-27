@@ -1,6 +1,6 @@
 use actix_rt::time::sleep;
 use rand::{SeedableRng, Rng};
-use shop::delivery::deliver;
+use shop::delivery::DeliveryHandler;
 use shop::ecomerce::Ecommerce;
 use shop::request_simulator::{Simulator, simulate};
 use shop::token_ring::TokenRing;
@@ -52,7 +52,7 @@ async fn main() {
 
     let (tx_delivery,rx_delivery) = mpsc::channel();
     let (tx_ring_messages,rx_ring_messages) = mpsc::channel();
-    let (shop_location ,shop_addr) = match Shop::from(stock_file_name.to_string(), tx_delivery){
+    let (shop_location ,shop_addr) = match Shop::from(stock_file_name.to_string(), tx_delivery.clone()){
         Ok(shop) => (shop.location, shop.start()),
         Err(error) => return println!("{:?}", error),  
     };
@@ -60,8 +60,8 @@ async fn main() {
     if load_ecommerce_addr(shop_addr.clone(),ecommerce_addr.clone()).await.is_err(){
         return println!("tengo miedo");   //WIP
     };
-    let deliveries_shop_addr = shop_addr.clone();
-    let delivery_handler = thread::spawn(move|| deliver(deliveries_shop_addr, rx_delivery, shop_location));
+    
+    let delivery_handler = DeliveryHandler::new(shop_addr.clone(), rx_delivery, tx_delivery, shop_location);
     
     let tr = match TokenRing::new(node_addr, ring_node_addr, ecommerce_addr, tx_ring_messages, rx_ring_messages){
         Ok(tr_res) => tr_res,
@@ -77,13 +77,12 @@ async fn main() {
     
     let stdin = io::stdin();
     let mut lines = BufReader::new(stdin).lines();
-    println!("llegue aca");
     while let Ok(Some(line)) = lines.   next_line().await{
         println!("leyendo linea {line}");
         let mut words: VecDeque<&str> = line.trim().split(" ").collect();
         if let Some(first_word) = words.pop_front(){
             let res = match first_word {
-                "exit" => todo!(),
+                "exit" => break,
                 "disconnect" => tr.disconnect(),
                 "connect" => {
                     match words.pop_front(){
@@ -107,10 +106,12 @@ async fn main() {
             }
         }
     }
-    //thread::sleep(Duration::from_secs(1000));
-    System::current().stop();
+    
+    tr.stop().unwrap();
+    delivery_handler.stop().unwrap();
     if let Some(simulator) = simulator{
         simulator.stop().unwrap();
     }
+    System::current().stop();
     
 }

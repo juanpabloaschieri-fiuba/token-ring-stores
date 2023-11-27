@@ -1,10 +1,12 @@
 use std::cmp::Reverse;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Condvar};
+use std::thread::{JoinHandle, self};
 use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use crate::shop::Shop;
 use crate::messages::{Request, FinishedDelivery};
 use crate::point::*;
+use crate::token_ring::FinishStatus;
 use std::collections::BinaryHeap;
 use rand::prelude::*;
 use actix::{Actor, Context, Handler, System, Addr, Message,};
@@ -59,14 +61,14 @@ impl PartialOrd for DeliveryOrder{
 
 struct Delivery{
     shop_addr: Addr<Shop>,
-    receiver: Receiver<Request>,
+    receiver: Receiver<Option<Request>>,
     ongoing_deliveries: BinaryHeap<DeliveryOrder>,
     shop_location:  Point,
     starting_instant: Instant
 }
 
 impl Delivery{
-    fn new(shop_addr: Addr<Shop>, receiver: Receiver<Request>, shop_location: Point)->Delivery{
+    fn new(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>, shop_location: Point)->Delivery{
         Delivery{
             shop_addr,
             receiver,
@@ -76,29 +78,46 @@ impl Delivery{
         }
     }
 
+    fn recv_timeout(&mut self, timeout: Duration)->Result<Option<DeliveryOrder>, DeliveryError>{
+        match self.receiver.recv_timeout(timeout){
+            Ok(request) => {
+                match request{
+                    Some(req) => {
+                        self.add_request(req);
+                        return Ok(None)
+                    },
+                    None => return Err(DeliveryError::ErrorFinishingSimulation),
+                }
+            },
+            Err(error) => {
+                if let mpsc::RecvTimeoutError::Timeout = error{
+                    let delivery_order = self.ongoing_deliveries.pop();
+                    return Ok(delivery_order)
+                } else {
+                    return Err(DeliveryError::ErrorReceivingRequests)
+                }
+            }
+        }
+    }
+
+    fn rcv(&mut self)->Result<Option<DeliveryOrder>, DeliveryError>{
+        let request = self.receiver.recv().map_err(|_| DeliveryError::ErrorReceivingRequests)?;
+        match request{
+            Some(req) => {
+                self.add_request(req);
+                return Ok(None)
+            },
+            None => return Err(DeliveryError::ErrorFinishingSimulation),
+        }
+    }
+
     fn wait_until_finish_or_new_delivery(&mut self)->Result<Option<DeliveryOrder>, DeliveryError>{
         if let Some(delivery_order) = self.ongoing_deliveries.peek(){
             let duration = ((delivery_order.time_to_arrive as f64) - self.starting_instant.elapsed().as_secs_f64()).max(0.0);
             let timeout = Duration::from_secs_f64(duration);
-            match self.receiver.recv_timeout(timeout){
-                Ok(request) => {
-                    self.add_request(request);
-                    return Ok(None)
-                },
-                Err(error) => {
-                    if let mpsc::RecvTimeoutError::Timeout = error{
-                        let delivery_order = self.ongoing_deliveries.pop();
-                        return Ok(delivery_order)
-                    } else {
-                        return Err(DeliveryError::ErrorReceivingRequests)
-                    }
-                }
-            }
+            return self.recv_timeout(timeout);
         }
-        
-        let request = self.receiver.recv().map_err(|_| DeliveryError::ErrorReceivingRequests)?;
-        self.add_request(request);
-        Ok(None)
+        self.rcv()
     }                               
 
     fn add_request(&mut self, request: Request){
@@ -120,26 +139,56 @@ impl Delivery{
         };
         self.shop_addr.try_send(msg).map_err(|_| DeliveryError::ErrorCommunicatingWithShop)
     }
+}   
+
+pub struct DeliveryHandler {
+    handle: JoinHandle<FinishStatus>,
+    finish_sender: Sender<Option<Request>>
 }
+
+impl DeliveryHandler{
+
+    pub fn new(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>, finish_sender: Sender<Option<Request>>,shop_location: Point)-> DeliveryHandler {
+        let handle = thread::spawn(move|| deliver(shop_addr, receiver, shop_location));
+        DeliveryHandler{handle, finish_sender}
+    }
+
+    pub fn stop(self) -> Result<FinishStatus, DeliveryError>{
+        self.finish_sender.send(None).map_err(|_| DeliveryError::ErrorFinishingSimulation)?;
+        let res = self.handle.join().map_err(|_| DeliveryError::ErrorJoiningSimulationThread)?;
+        
+        Ok(res)
+    }
+}
+
+
+
 
 #[derive(Debug)]
 pub enum DeliveryError{
     ErrorReceivingRequests,
     ErrorCommunicatingWithShop,
-    TimeoutError
+    TimeoutError,
+    ErrorFinishingSimulation,
+    ErrorJoiningSimulationThread,
 }
 
-pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Request>,shop_location: Point) -> Result<(), DeliveryError>{
+pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>,shop_location: Point) -> FinishStatus{
     let mut delivery = Delivery::new(shop_addr, receiver,shop_location);
-    
     loop{
-        //si no hay que finiquitar WIP
-        let delivery_order = delivery.wait_until_finish_or_new_delivery()?;
-        if let Some(delivery_order) = delivery_order{
-            delivery.inform_shop(delivery_order)?;
+        match delivery.wait_until_finish_or_new_delivery(){
+            Ok(delivery_order) => if let Some(delivery_order) = delivery_order{
+                if let Err(error) = delivery.inform_shop(delivery_order) {
+                    return FinishStatus::ErrorDelivery(error);
+                }
+            },
+            Err(error) => match error{
+                DeliveryError::ErrorFinishingSimulation => return FinishStatus::GracefulFinish,
+                _ => return FinishStatus::ErrorDelivery(error),
+            }
         }
     }
-    Ok(())
+    
 }
 
 #[cfg(test)]
@@ -166,8 +215,8 @@ mod test {
         let order_2 = Request::new(vec![], vec![], Point::new(5,5));
         let mut delivery = Delivery::new(shop_addr, rx, Point::new(0,0));
         
-        sx.send(order_1).unwrap();
-        sx.send(order_2).unwrap();
+        sx.send(Some(order_1)).unwrap();
+        sx.send(Some(order_2)).unwrap();
 
         assert_eq!(delivery.wait_until_finish_or_new_delivery()?, None);
         assert_eq!(delivery.wait_until_finish_or_new_delivery()?, None);

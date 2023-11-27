@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use actix::Addr;
 
+use crate::delivery::DeliveryError;
 use crate::ecomerce::Ecommerce;
+use crate::request_simulator::SimulationError;
 use crate::token_ring_messages::{NodeConnection, RingMessage, MsgId, SetConnectionStatus, ByteConvertable};
 use crate::token_ring_sender::TokenRingSender;
 use crate::token_ring_receiver::TokenRingReceiver;
@@ -31,11 +33,21 @@ pub enum TokenRingError{
     ErrorReceivedFromUnknownSource,
     ErrorInitializingNode,
     ErrorSettingStatus,
+    ErrorJoiningThread,
+    EndOfProgram,
+}
+
+#[derive(Debug)]
+pub enum FinishStatus {
+    GracefulFinish,
+    ErrorFinish(TokenRingError),
+    ErrorDelivery(DeliveryError),
+    ErrorSimulation(SimulationError)
 }
 
 pub struct TokenRing{
-    sender_join_handle: JoinHandle<Result<(), TokenRingError>>,
-    receiver_join_handle: JoinHandle<Result<(), TokenRingError>>,
+    sender_join_handle: JoinHandle<Result<FinishStatus, TokenRingError>>,
+    receiver_join_handle: JoinHandle<FinishStatus>,
     node_addr: SocketAddr,
     socket: UdpSocket,
 }
@@ -90,26 +102,56 @@ impl TokenRing{
         Ok(())
     }
 
+    pub fn stop(self) -> Result<(), TokenRingError> {
+        let msg = RingMessage::new_end_of_program();
+        self.socket.send_to(&msg.to_bytes(), self.node_addr).map_err(|_| TokenRingError::ErrorSendingMsg)?;
+        
+        let sender_res = self.sender_join_handle.join().map_err(|_| TokenRingError::ErrorJoiningThread)?;
+        print(format!("Sender finished: {:?}", sender_res));
+        let receiver_res = self.receiver_join_handle.join().map_err(|_| TokenRingError::ErrorJoiningThread)?;
+        print(format!("Receiver Finished: {:?}", receiver_res));
+        
+        Ok(())
+    }
+
 }
 
 
 
-fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:SocketAddr)->Result<(),TokenRingError>{   
+fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:SocketAddr) -> Result<FinishStatus, TokenRingError> {   
     if stablished_ring{
         let msg = RingMessage::from_node_connection(NodeConnection::start(node_addr));
         //tr_sender.process_msg(msg);
         tr_sender.update_next_peer(msg.clone())?;
         tr_sender.send(msg)?;
     }
-    loop{
-        tr_sender.rcv_and_procces()? //Fijase si hay que termianr WIP
-    }
+
+    let mut res = FinishStatus::GracefulFinish;
+    loop {
+        if let Err(err) = tr_sender.rcv_and_process() {
+            res = match err {
+                TokenRingError::EndOfProgram => FinishStatus::GracefulFinish,
+                _ => FinishStatus::ErrorFinish(err),
+            };
+            break;
+        }
+    };
+    Ok(res)
 }
 
-fn run_receiver(mut tr_receiver: TokenRingReceiver) -> Result<(), TokenRingError>{
-    loop{
-        tr_receiver.recv_and_handle()? //Fijase si hay que termianr WIP
-    }
+fn run_receiver(mut tr_receiver: TokenRingReceiver) -> FinishStatus {
+    let mut res = FinishStatus::GracefulFinish;
+    loop {
+        if let Err(err) = tr_receiver.recv_and_handle() {
+            res = match err {
+                TokenRingError::EndOfProgram => FinishStatus::GracefulFinish,
+                _ => FinishStatus::ErrorFinish(err),
+            };
+            break;
+        }
+    };
+    tr_receiver.signal_end_of_program_to_sender();
+    res
 }
 
 #[derive(Debug, Clone)]

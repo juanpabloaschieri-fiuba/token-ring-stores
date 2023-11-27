@@ -18,7 +18,7 @@ pub struct Shop{
     stock: HashMap<u32, (u32, u32)>,
     pub location: Point,
     ecomerce_addr: Option<Addr<Ecommerce>>,
-    delivery_sender: Sender<Request>
+    delivery_sender: Sender<Option<Request>>
 }
 
 impl Actor for Shop{
@@ -27,12 +27,12 @@ impl Actor for Shop{
 
 impl Shop{
     /// Private constructor for Shop
-    pub fn new(stock: HashMap<u32, (u32, u32)>, location: Point, delivery_sender: Sender<Request>) -> Shop{
+    pub fn new(stock: HashMap<u32, (u32, u32)>, location: Point, delivery_sender: Sender<Option<Request>>) -> Shop{
         Shop{stock, location, ecomerce_addr: None, delivery_sender}
     }
     
     /// Public constructor for Shop. Receives a path to a file with the shop stock and returns a Shop.
-    pub fn from(path: String, delivery_sender: Sender<Request>)-> Result<Shop, ShopError>{
+    pub fn from(path: String, delivery_sender: Sender<Option<Request>>)-> Result<Shop, ShopError>{
         let file = File::open(path);
         println!("{:?}", file);
         let file = file.map_err(|_| ShopError::ErrorCreatingShop)?;
@@ -117,7 +117,7 @@ impl Shop{
     /// delivery system. Could return an error if the shop can't deliver the package.
     fn handle_online_request(&mut self, request: &Request)-> Result<(), ShopError>{
         self.process_request(&request, false)?;
-        self.delivery_sender.send(request.clone()).map_err(|_| ShopError::ErrorCannotDeliverPackage)?;
+        self.delivery_sender.send(Some(request.clone())).map_err(|_| ShopError::ErrorCannotDeliverPackage)?;
         
         Ok(())
     }
@@ -307,6 +307,6 @@ mod test {
         let mut shop = Shop::from("test_files/shop_test_1.txt".to_string(), tx).unwrap();
         let request = Request::new( vec![1,2,3], vec![2,4,2], Point::new(0,0));
         shop.handle_online_request(&request);
-        assert_eq!(request, rx.recv().unwrap())
+        assert_eq!(request, rx.recv().unwrap().unwrap())
     }
 }

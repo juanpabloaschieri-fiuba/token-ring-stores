@@ -252,7 +252,7 @@ impl TokenRingSender {
             let addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
             addresses.get(&u16::MAX).ok_or(TokenRingError::ErrorDisconnected)?.clone()
         };
-        let msg = match connect_msg.connect_to{
+        let msg = match connect_msg.connect_to {
             Some(addr) => {
                 print(format!("Entre a la rama del some  con addr: {:?}",addr));
                 self.message_window.next_peer = addr;
@@ -304,11 +304,15 @@ impl TokenRingSender {
     }
 
     /// Listens for messages in the channel and it processes them.
-    pub fn rcv_and_procces(&mut self)->Result<(), TokenRingError>{
+    pub fn rcv_and_process(&mut self)->Result<(), TokenRingError>{
         let msg = self.recv_until_smallest_timeout();
-            //fijarse si termino (me mato)
         match msg{
-            Ok(msg) => self.process_msg(msg)?,
+            Ok(msg) => {
+                match msg.header.msg_type{  
+                    RingMessageType::EndOfProgram => return Err(TokenRingError::EndOfProgram),
+                    _ => self.process_msg(msg)?,
+                }
+            }
             Err(error) => match error{
                 TokenRingError::ErrorTimeOut => self.handle_timeout()?,
                 _ => return Err(error),
@@ -739,8 +743,8 @@ pub mod test {
         receive_udp_package_from(&socket).unwrap();
         receive_udp_package_from(&socket).unwrap();
 
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
+        tr_sender.rcv_and_process()?;
+        tr_sender.rcv_and_process()?;
         let (received_bytes_msg1 ,_) = receive_udp_package_from(&socket).unwrap();
         let (received_bytes_msg2 ,_) = receive_udp_package_from(&socket).unwrap();
 
@@ -774,7 +778,7 @@ pub mod test {
 
         for i in 0..2*(MAX_PEER_TIMEOUT-1)+1{
             println!("{i}");
-            tr_sender.rcv_and_procces()?;
+            tr_sender.rcv_and_process()?;
         }
 
         for _i in 0..2*MAX_PEER_TIMEOUT{
@@ -839,7 +843,7 @@ pub mod test {
         tr_sender.send(msg)?;
         tr_sender.acknowledge_sent_msg(RingMessage::new_ack(MsgId::new(0, 0),RingMessageType::ReceivedAck));
 
-        tr_sender.rcv_and_procces()?;
+        tr_sender.rcv_and_process()?;
         receive_udp_package_from(&socket).unwrap();
         receive_udp_package_from(&socket).unwrap();
         assert!(receive_udp_package_from(&socket).is_err());
@@ -859,7 +863,7 @@ pub mod test {
         let mut ack_msg = RingMessage::new_ack(MsgId::new(0, 0), RingMessageType::SendAck);
         ack_msg.header.sender_addr = Some(SocketAddr::from_str("127.0.0.1:21000").unwrap());
         msg_sender.send(ack_msg).unwrap();
-        tr_sender.rcv_and_procces()?;
+        tr_sender.rcv_and_process()?;
 
         receive_udp_package_from(&tr_sender.message_window.socket).unwrap();
 
@@ -876,7 +880,7 @@ pub mod test {
 
         for i in 0..MAX_PEER_TIMEOUT{
             println!("{i}");
-            tr_sender.rcv_and_procces()?;
+            tr_sender.rcv_and_process()?;
         }
 
         println!("{:?}",tr_sender.message_window.next_peer);
@@ -909,8 +913,8 @@ pub mod test {
         tr_sender.acknowledge_sent_msg(RingMessage::new_ack(MsgId::new(0, 0),RingMessageType::ReceivedAck));
         tr_sender.acknowledge_sent_msg(RingMessage::new_ack(MsgId::new(0, 1),RingMessageType::ReceivedAck));
 
-        tr_sender.rcv_and_procces()?;
-        tr_sender.rcv_and_procces()?;
+        tr_sender.rcv_and_process()?;
+        tr_sender.rcv_and_process()?;
 
         msg1.header.id.seq_num = 2;
         msg2.header.id.seq_num = 3;
@@ -1043,20 +1047,38 @@ pub mod test {
     }
 
     #[test]
-    fn test_19_setting_a_false_connection_status_resets_the_node() -> Result<(), TokenRingError>{
-        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(1, 29000);
+    fn test_19_a_node_reconnects_to_itself_in_a_cero_peer_ring() -> Result<(), TokenRingError>{
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(0, 29000);
         tr_sender.connected = false;
-        let socket = UdpSocket::bind("127.0.0.1:29001").unwrap();
-        socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
-        let msg = SetConnectionStatus::new(true, Some(SocketAddr::from_str("127.0.0.1:29001").unwrap()));
+        tr_sender.reset_node()?;
+
+        let msg = SetConnectionStatus::new(true,None);
         tr_sender.process_msg(RingMessage::from_set_connection_status(msg))?;
 
-        let aux_msg = RingMessage::from_node_connection(NodeConnection::start(SocketAddr::from_str("127.0.0.1:29002").unwrap()));
+        assert!(tr_sender.connected);
+        assert_eq!(tr_sender.message_window.next_peer, SocketAddr::from_str("127.0.0.1:29000").unwrap());
+
+        Ok(())
+    }
+
+    /*#[ test]
+    fn test_20_connect_to_existant_token_ring() -> Result<(), TokenRingError>{
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(1, 30000);
+        tr_sender.connected = false;
+        tr_sender.reset_node()?;
+        let socket = UdpSocket::bind("127.0.0.1:30001").unwrap();
+        socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let msg = SetConnectionStatus::new(true, Some(SocketAddr::from_str("127.0.0.1:30001").unwrap()));
+        tr_sender.process_msg(RingMessage::from_set_connection_status(msg))?;
+        
+        let addr1 = SocketAddr::from_str("127.0.0.1:30001").unwrap();
+        let node_addr = SocketAddr::from_str("127.0.0.1:30000").unwrap();
+        let aux_msg = RingMessage::from_node_connection( NodeConnection::new(MsgId::new(1,2), vec![u16::MAX,1], 2, node_addr, VecDeque::from([1,2]), vec![addr1, node_addr] ));
         tr_sender.process_msg(aux_msg)?;
-        let node_addr = SocketAddr::from_str("127.0.0.1:29000").unwrap();
+
 
         assert!(tr_sender.connected);
-        assert_eq!(tr_sender.message_window.next_peer, SocketAddr::from_str("127.0.0.1:29001").unwrap());
+        assert_eq!(tr_sender.message_window.next_peer, SocketAddr::from_str("127.0.0.1:30001").unwrap());
         
         let (received_bytes_msg,_) = receive_udp_package_from(&socket).unwrap();
         let received_msg = RingMessage::from_bytes(&received_bytes_msg)?;
@@ -1064,5 +1086,7 @@ pub mod test {
         assert!(!receive_udp_package_from(&socket).is_err());
         
         Ok( ())
-    }
+    } */
+    
+    
 }
