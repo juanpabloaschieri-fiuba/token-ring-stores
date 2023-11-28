@@ -6,7 +6,6 @@ use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use crate::shop::Shop;
 use crate::messages::{Request, FinishedDelivery};
 use crate::point::*;
-use crate::token_ring::FinishStatus;
 use std::collections::BinaryHeap;
 use rand::prelude::*;
 use actix::{Actor, Context, Handler, System, Addr, Message,};
@@ -142,7 +141,7 @@ impl Delivery{
 }   
 
 pub struct DeliveryHandler {
-    handle: JoinHandle<FinishStatus>,
+    handle: JoinHandle<Result<(), DeliveryError>>,
     finish_sender: Sender<Option<Request>>
 }
 
@@ -153,11 +152,11 @@ impl DeliveryHandler{
         DeliveryHandler{handle, finish_sender}
     }
 
-    pub fn stop(self) -> Result<FinishStatus, DeliveryError>{
+    pub fn stop(self) -> Result<(), DeliveryError>{
         self.finish_sender.send(None).map_err(|_| DeliveryError::ErrorFinishingSimulation)?;
         let res = self.handle.join().map_err(|_| DeliveryError::ErrorJoiningSimulationThread)?;
-        
-        Ok(res)
+        println!("Delivery finished: {:?}", res);
+        Ok(())
     }
 }
 
@@ -173,18 +172,18 @@ pub enum DeliveryError{
     ErrorJoiningSimulationThread,
 }
 
-pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>,shop_location: Point) -> FinishStatus{
+pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>,shop_location: Point) -> Result<(), DeliveryError>{
     let mut delivery = Delivery::new(shop_addr, receiver,shop_location);
     loop{
         match delivery.wait_until_finish_or_new_delivery(){
             Ok(delivery_order) => if let Some(delivery_order) = delivery_order{
                 if let Err(error) = delivery.inform_shop(delivery_order) {
-                    return FinishStatus::ErrorDelivery(error);
+                    return Err(error);
                 }
             },
             Err(error) => match error{
-                DeliveryError::ErrorFinishingSimulation => return FinishStatus::GracefulFinish,
-                _ => return FinishStatus::ErrorDelivery(error),
+                DeliveryError::ErrorFinishingSimulation => return Ok(()),
+                _ => return Err(error),
             }
         }
     }

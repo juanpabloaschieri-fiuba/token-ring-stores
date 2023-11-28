@@ -12,7 +12,6 @@ use colored::*;
 use crate::shop::{*, self};
 use crate::messages::*;
 use crate::point::*;
-use crate::token_ring::FinishStatus;
 use crate::token_ring_messages::{CoordinateRequest, MsgId, RingMessage, ByteConvertable};
 use std::sync::mpsc::{Sender, Receiver, self};
 ///13 //tiempo hasta pedido
@@ -90,7 +89,13 @@ impl Simulator{
 
     pub fn stop(self) -> Result<(), SimulationError>{
         let _ = self.finish_sender.send(true).map_err(|_| SimulationError::ErrorInCommunications);
-        self.handle.join().map_err(|_| SimulationError::ErrorJoiningSimulationThread)?
+        let res = self.handle.join().map_err(|_| SimulationError::ErrorJoiningSimulationThread)?;
+        print(format!("Simulator finished: {:?}", res));
+        Ok(())
+    }
+
+    pub fn is_finished(&self) -> bool{
+        self.handle.is_finished()
     }
 }
 

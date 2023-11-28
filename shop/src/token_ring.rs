@@ -19,7 +19,6 @@ use colored::*;
 pub type SharedRingAddresses = Arc<Mutex<HashMap<u16, SocketAddr>>>;
 pub type SharedRingTopology = Arc<Mutex<VecDeque<u16>>>;
 
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenRingError{
     ErrorTimeOut,
@@ -37,24 +36,15 @@ pub enum TokenRingError{
     EndOfProgram,
 }
 
-#[derive(Debug)]
-pub enum FinishStatus {
-    GracefulFinish,
-    ErrorFinish(TokenRingError),
-    ErrorDelivery(DeliveryError),
-    ErrorSimulation(SimulationError)
-}
-
 pub struct TokenRing{
-    sender_join_handle: JoinHandle<Result<FinishStatus, TokenRingError>>,
-    receiver_join_handle: JoinHandle<FinishStatus>,
+    sender_join_handle: JoinHandle<Result<(), TokenRingError>>,
+    receiver_join_handle: JoinHandle<Result<(), TokenRingError>>,
     node_addr: SocketAddr,
     socket: UdpSocket,
 }
 
 impl TokenRing{
     pub fn new(node_addr: SocketAddr, ring_node_addr: Option<SocketAddr>, ecommerce_addr: Addr<Ecommerce>, msg_sender: Sender<RingMessage>, msg_receiver: Receiver<RingMessage>)->Result<TokenRing, TokenRingError>{
-        //let (msg_sender, msg_receiver) = mpsc::channel();
         let socket = UdpSocket::bind(node_addr).map_err(|_| TokenRingError::ErrorInitializingNode)?;
         let mut topology = VecDeque::new();
         let mut addresses = HashMap::new();
@@ -118,40 +108,44 @@ impl TokenRing{
 
 
 
-fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:SocketAddr) -> Result<FinishStatus, TokenRingError> {   
+fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:SocketAddr) -> Result<(), TokenRingError>{
     if stablished_ring{
         let msg = RingMessage::from_node_connection(NodeConnection::start(node_addr));
-        //tr_sender.process_msg(msg);
-        tr_sender.update_next_peer(msg.clone())?;
-        tr_sender.send(msg)?;
+        tr_sender.process_msg(msg)?;
+        //tr_sender.update_next_peer(msg.clone())?;
+        //tr_sender.send(msg)?;
     }
 
-    let mut res = FinishStatus::GracefulFinish;
+    let mut res = Ok(());
     loop {
-        if let Err(err) = tr_sender.rcv_and_process() {
-            res = match err {
-                TokenRingError::EndOfProgram => FinishStatus::GracefulFinish,
-                _ => FinishStatus::ErrorFinish(err),
+        tr_sender.rcv_and_process()?;
+        if let Err(error) = tr_sender.rcv_and_process() {
+            match error {
+                TokenRingError::EndOfProgram => break,
+                _ => {
+                    res = Err(error);
+                    break;
+                },
             };
-            print(format!("Sender finished with: {:?}", res));
-            break;
         }
     };
-    Ok(res)
+    print(format!("Sender finished: {:?}", res));
+    res
 }
 
-fn run_receiver(mut tr_receiver: TokenRingReceiver) -> FinishStatus {
-    let mut res = FinishStatus::GracefulFinish;
+fn run_receiver(mut tr_receiver: TokenRingReceiver) -> Result<(), TokenRingError> {
+    let mut res = Ok(());
     loop {
-        if let Err(err) = tr_receiver.recv_and_handle() {
-            res = match err {
-                TokenRingError::EndOfProgram => FinishStatus::GracefulFinish,
-                _ => FinishStatus::ErrorFinish(err),
+        if let Err(err) = tr_receiver.recv_and_handle(){
+            match err {
+                TokenRingError::EndOfProgram => {},
+                _ => res = Err(err),
             };
             break;
         }
     };
     tr_receiver.signal_end_of_program_to_sender();
+    print(format!("receiver finished: {:?}", res));
     res
 }
 
