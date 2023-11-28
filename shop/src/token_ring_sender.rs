@@ -140,7 +140,7 @@ impl TokenRingSender {
             None => return Ok(())
         };
         if let Some(msg) = self.created_messages.remove(&final_time.id)?{
-            print(format!("Se reenvia por TO de created el mensaje al next peer {:?} de tipo {:?}, {:?}, tiene las firmas {:?}", self.message_window.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
+            print(format!("Ressending msg {:?} of type {:?} to next peer {:?} with signatures {:?} due to TO of created messages",msg.header.id, msg.header.msg_type, self.message_window.next_peer, msg.signatures));
             if msg.header.id.is_from_node(self.message_window.node_id){
                 self.send_with_priority(msg, true)?;
             }
@@ -174,7 +174,6 @@ impl TokenRingSender {
 
         let next_id = ring_topology.front().ok_or(TokenRingError::ErrorDisconnected)?;
         let addr = ring_addresses.get(next_id).ok_or(TokenRingError::ErrorDisconnected)?.clone();
-        println!("al salir del delete{:?}", addr);
         Ok((removed_id, addr))
     }
 
@@ -257,11 +256,9 @@ impl TokenRingSender {
         };
         let msg = match connect_msg.connect_to {
             Some(addr) => {
-                print(format!("Entre a la rama del some  con addr: {:?}",addr));
                 self.message_window.next_peer = addr;
                 RingMessage::from_node_connection(NodeConnection::start(node_addr))},
             None => {
-                println!("Mandamos el mensaje con la addr{:?}",node_addr);
                 let msg = NodeConnection::new(MsgId::default(), Vec::new(), 1, node_addr, VecDeque::from([0]), vec![node_addr]);
                 RingMessage::from_node_connection(msg)
             }
@@ -327,7 +324,7 @@ impl TokenRingSender {
     /// Given a MsgId it sends the coresponding ack message to the node that sent the message.
     fn send_acknowledgement(&mut self, ack_msg: &RingMessage )-> Result<(),TokenRingError>{
         if let Some(addr) = ack_msg.header.sender_addr{
-            print(format!("El mensaje a enviar en el sender es de tipo {:?}, {:?}, se lo mandamos a {:?}", "ACK", ack_msg.header.id, ack_msg.header.sender_addr));
+            print(format!("Sending msg {:?} of type {:?} to next peer {:?}",ack_msg.header.id, ack_msg.header.msg_type, self.message_window.next_peer));
             self.message_window.socket.send_to(&mut ack_msg.to_bytes(), addr).map_err(|_| TokenRingError::ErrorSendingMsg)?;
         }
 
@@ -463,7 +460,7 @@ impl Window{
         }
 
         msg.sign(self.node_id);
-        print(format!("El next peer {:?} El mensaje a enviar en el sender es de tipo {:?}, {:?}, tiene las firmas {:?}", self.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
+        print(format!("Sending msg {:?} of type {:?} to next peer {:?} with signatures {:?}",msg.header.id, msg.header.msg_type, self.next_peer, msg.signatures));
         self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
         if !self.messages.contains_key(&msg.header.id){
             self.final_times.push_back(FinalTime::from_timeout(PEER_TIMEOUT_MS, msg.header.id));
@@ -474,10 +471,8 @@ impl Window{
 
     /// Receives a RingMessage and it removes it from the window if it is in it.
     fn acknowledge_sent_msg(&mut self, msg: RingMessageHeader){
-        //print(format!("entre a acknowledgement msg con el id {:?}", msg.id));
         if self.messages.remove(&msg.id).is_some(){
             let b: Vec<&MsgId> = self.messages.iter().map(|(id ,msg)| id).collect();
-            //print(format!("Saque de la ventana a {:?}, la ventana esta como {:?}", msg.id, b));
             self.remove_final_time(&msg.id)
         }
     }
@@ -512,7 +507,7 @@ impl Window{
         }
 
         if let Some(mut msg) = self.messages.remove(&final_time.id){
-            print(format!("Se reenvia por TO de Window el mensaje al next peer {:?} de tipo {:?}, {:?}, tiene las firmas {:?}", self.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
+            print(format!("Ressending msg {:?} of type {:?} to next peer {:?} with signatures {:?} due to TO ACK Timeout",msg.header.id, msg.header.msg_type, self.next_peer, msg.signatures));
             self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
             final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
             self.final_times.push_back(final_time);
@@ -780,7 +775,6 @@ pub mod test {
         tr_sender.send(msg.clone())?;
 
         for i in 0..2*(MAX_PEER_TIMEOUT-1)+1{
-            println!("{i}");
             tr_sender.rcv_and_process()?;
         }
 
@@ -878,11 +872,9 @@ pub mod test {
         tr_sender.send(msg)?;
 
         for i in 0..MAX_PEER_TIMEOUT{
-            println!("{i}");
             tr_sender.rcv_and_process()?;
         }
 
-        println!("{:?}",tr_sender.message_window.next_peer);
         assert_eq!(tr_sender.message_window.next_peer,SocketAddr::from_str("127.0.0.1:22000").unwrap());
         receive_udp_package_from(&tr_sender.message_window.socket).unwrap();
         receive_udp_package_from(&tr_sender.message_window.socket).unwrap();

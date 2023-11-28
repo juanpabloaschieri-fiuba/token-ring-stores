@@ -34,7 +34,6 @@ impl Shop{
     /// Public constructor for Shop. Receives a path to a file with the shop stock and returns a Shop.
     pub fn from(path: String, delivery_sender: Sender<Option<Request>>)-> Result<Shop, ShopError>{
         let file = File::open(path);
-        println!("{:?}", file);
         let file = file.map_err(|_| ShopError::ErrorCreatingShop)?;
         let mut reader = BufReader::new(file);
 
@@ -65,7 +64,6 @@ impl Shop{
 
     /// Given a request, returns true if the request is a physical request to the shop.
     fn is_physical_request(&self, request: &Request) -> bool{
-        //print(format!("Location: {:?}, destination: {:?}", self.location, request.destination));
         self.location == request.destination
     }
 
@@ -83,7 +81,8 @@ impl Shop{
                     }
                 }
             }
-            print(format!("Received_request {:?}, stock after processing {:?}", request, self.stock));
+            print(format!("Received {}", request));
+            self.print_stock();
             return Ok(())
         }
         print("Not enough Stock".to_string());
@@ -110,7 +109,7 @@ impl Shop{
             }
         }
         
-        print(format!("After Handling {:?}", self.stock));
+        self.print_stock();
     }
 
     /// Given a request made to the online shop, it processes the request and sends it to the
@@ -120,6 +119,20 @@ impl Shop{
         self.delivery_sender.send(Some(request.clone())).map_err(|_| ShopError::ErrorCannotDeliverPackage)?;
         
         Ok(())
+    }
+
+    fn print_stock(&self){
+        let mut string = format!("{}{}\n","Stock:\n|id      |reserved|in_stock|\n", "-".repeat(3*9 +1));
+        for (item_id, (in_stock, reserved)) in self.stock.iter(){
+            let mut item_id = format!("{}", item_id);
+            item_id = format!("|{}{}|", item_id, " ".repeat(8-item_id.len()));
+            let mut reserved = format!("{}", reserved);
+            reserved = format!("{}{}|", reserved, " ".repeat(8-reserved.len()));
+            let mut in_stock = format!("{}", in_stock);
+            in_stock = format!("{}{}|", in_stock, " ".repeat(8-in_stock.len()));
+            string = format!("{}{}{}{}\n", string, item_id, reserved, in_stock);
+        }
+        print(string);
     }
 }
 
@@ -142,8 +155,8 @@ impl Handler<Request> for Shop{
     /// the request and, if it is an online request, it sends it to the delivery system.
     /// Could return an error if the shop hasn't enough stock or if it can't deliver the package.
     fn handle(&mut self, _msg: Request , _ctx: &mut Context<Self>) -> Self::Result {
-        print(format!("La request es fisica,. {:?}", self.is_physical_request(&_msg)));
         if self.is_physical_request(&_msg){
+            print("Received Physical Request".to_string());
             self.process_request(&_msg, true).map_err(|error| MessageError::ShopError(error));
             
         } else if let Err(error) = self.handle_online_request(&_msg){
@@ -188,9 +201,9 @@ impl Handler<EnoughStockMsg> for Shop{
             StockAvailabilityMsg::NotEnoughStock(_msg.req_id)
         };
         if let Some(ecommerce_addr) = &self.ecomerce_addr{
-            print(format!("Respondiendo {:?}", stock_availability));
+            print(format!("{}", stock_availability));
             if ecommerce_addr.try_send(stock_availability).is_err(){
-                println!("Failed to communicate with Ecommerce")//WIP
+                print("Failed to communicate with Ecommerce".to_string())//WIP
             }
         }
     }

@@ -39,6 +39,7 @@ pub enum TokenRingError{
 pub struct TokenRing{
     sender_join_handle: JoinHandle<Result<(), TokenRingError>>,
     receiver_join_handle: JoinHandle<Result<(), TokenRingError>>,
+    topology: SharedRingTopology,
     node_addr: SocketAddr,
     socket: UdpSocket,
 }
@@ -71,11 +72,11 @@ impl TokenRing{
         let created_messages = SharedCreatedMessages::new();
         let tr_sender = TokenRingSender::new(node_id, msg_receiver, topology.clone(), addresses.clone(), created_messages.clone(), cloned_socket1, next_peer);
         let sender_join_handle = thread::spawn(move|| run_sender(tr_sender,stablished_ring,node_addr));
-        let tr_receiver = TokenRingReceiver::new(node_id, msg_sender, topology, addresses.clone(), created_messages, socket, ecommerce_addr);
+        let tr_receiver = TokenRingReceiver::new(node_id, msg_sender, topology.clone(), addresses.clone(), created_messages, socket, ecommerce_addr);
         let receiver_join_handle = thread::spawn(move|| run_receiver(tr_receiver));
         
         print("Created".to_string());
-        Ok(TokenRing { sender_join_handle, receiver_join_handle, node_addr, socket: cloned_socket2})
+        Ok(TokenRing { sender_join_handle, receiver_join_handle, topology, node_addr, socket: cloned_socket2})
     }
 
     pub fn disconnect(&self)->Result<(), TokenRingError>{
@@ -104,6 +105,17 @@ impl TokenRing{
         Ok(())
     }
 
+    pub fn print_topology(&self)->Result<(), TokenRingError>{
+        let topology = self.topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
+        let mut string = "Topology: [".to_string();
+        for peer in topology.iter(){
+            string = format!("{}{:?},", string, peer);
+        }
+        string.pop();
+        string.push(']');
+        print(string);
+        Ok(())
+    }
 }
 
 
@@ -112,8 +124,6 @@ fn run_sender(mut tr_sender: TokenRingSender, stablished_ring: bool, node_addr:S
     if stablished_ring{
         let msg = RingMessage::from_node_connection(NodeConnection::start(node_addr));
         tr_sender.process_msg(msg)?;
-        //tr_sender.update_next_peer(msg.clone())?;
-        //tr_sender.send(msg)?;
     }
 
     let mut res = Ok(());

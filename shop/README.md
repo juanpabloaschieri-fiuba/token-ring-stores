@@ -3,10 +3,10 @@
 Informe explicativo sobre la solucion general del TP  
 
 # Entidades creadas
-Las entidades creadas fueron modeladas con actores (por ejemplo, el `Shop` y el `E-Commerce`), otras fueron creadas con threads tradicionales (por ejemplo, el `Delivery`, el `TokenRIngSender` y `TokenRingReceiver`), y otras fueron tareas asincronicas (por ejemplo, la simulacion de pedidos tanto para el `Shop` como para el `E-Commerce`).
+Las entidades creadas fueron modeladas con actores (por ejemplo, el `Shop` y el `E-Commerce`), mientras que otras  fueron creadas con threads tradicionales (por ejemplo, el `Delivery`, el `TokenRingSender` y `TokenRingReceiver`).
 
 # Shop
-El Shop es el actor principal del sistema, y es el encargado de manejar el stock de los productos, y de recibir los pedidos. Se puede pensar como una sucursal de una cadena de tiendas, y cada Shop tiene un stock propio de productos. Esta implementado de la siguiente forma: 
+El Shop es el actor principal del sistema, es el encargado de manejar el stock de los productos, y de recibir los pedidos. Se puede pensar como una sucursal de una cadena de tiendas, y cada Shop tiene un stock propio de productos. Esta implementado de la siguiente forma: 
 ```rs
 pub struct Shop{
     stock: HashMap<u32, (u32, u32)>,
@@ -49,12 +49,8 @@ Donde:
 ---
 Ambas entidades fueron modeladas como actores, porque su Runtime es manejado por la libreria `actix` y no hay que tener una logica de manejo de threads, ademas de que es una buena forma de modelar entidades que tienen un comportamiento concurrente y se deben comunicar entre si. 
 
-## Pedidos presenciales
-Los pedidos presenciales son aquellos que se realizan en el Shop, y se tratan de la siguiente manera:
-1. Primero, se verifica que haya stock suficiente para el pedido. Si no hay stock suficiente, se le notifica al cliente que no se puede realizar el pedido.
-2. Si hay stock suficiente, directamente se resta el stock de la tienda porque el cliente se lleva el producto en el momento.
-
-Al inicio del programa
+# Simulador de pedidos
+El simulador de pedidos es el encargado de generar los pedidos que se realizan en el Shop, a partir de un archivo que contiene el tiempo de arribo del pedido como . 
 
 La logica de los pedidos se realiza con la lectura de un archivo con el siguiente formato:
 ```
@@ -69,7 +65,12 @@ id_producto_1,cantidad_producto_1;id_producto_2,cantidad_producto_2;...;id_produ
 
 Cada pedido tiene un tiempo de espera asociado (para que se permita tambien la entrada de pedidos desde el E-Commerce), y que cada pedido tiene un formato de `id_producto,cantidad_producto`. Esto se debe a que un cliente puede pedir mas de un producto a la vez, y por eso se usa el `;` como separador de productos.
 
-La lectura del archivo se realiza de forma **asincronica**, ya que el actor del Shop debe estar disponible para recibir pedidos (el Actor tambien corre de manera asincronica), y no puede estar bloqueado esperando a que se lea el archivo. Para esto, se usa la libreria `tokio` y se crea una tarea asincronica que se encarga de leer el archivo y mandar los pedidos al Shop correspondiente.
+El simulador corre sobre un thread aparte, y el simulador se inicia escribiendo `simulate` en la consola cuando el programa esta corriendo. El archivo de pedidos se selecciona segun el Shop que se quiera simular (primer argumento para `cargo run`). Cuando se inicia se encarga de leer el archivo de pedidos y realizar el timeout correspondiente, escuchando sobre un canal cuya unica finalidad es notificar al simulador si se quiere terminar el programa prematuramente. Cumplido este timeout, se lee la linea correspondiente al pedido, y se manda el pedido al shop si es fisico o al ecommerce si es online. Luego se repite el proceso hasta que se termine de leer el archivo de pedidos.
+
+## Pedidos presenciales
+Los pedidos presenciales son aquellos que se realizan en la sucursal presencial del Shop, y se tratan de la siguiente manera:
+1. Primero, se verifica que haya stock suficiente para el pedido. Si no hay stock suficiente, se le notifica al cliente que no se puede realizar el pedido.
+2. Si hay stock suficiente, directamente se resta el stock de la tienda porque el cliente se lleva el producto en el momento.
 
 ## Pedidos por E-Commerce
 Los pedidos realizados por la plataforma del E-Commerce se tratan casi identicamente a aquellos que son realizados presencialmente en el Shop correspondiente. La diferencia es que, para los pedidos realizados por la plataforma online, se debe tener en cuenta el _envio_ del producto hacia el destinatario, y la reserva de stock correspondiente.  
@@ -127,3 +128,57 @@ Cabe destacar que el envio de los pedidos con esta implementacion se simula **pa
 * Mientras tanto, el pedido que se realizo a las 10 de la mañana sigue en camino, y llegara a las 12 del mediodia.   
   
 Con esto, el Delivery de un Shop en particular puede ser pensado como un sistema de envio de pedidos que tiene una cantidad infinita de repartidores, y que cada repartidor manda 1 solo pedido a la vez.
+
+# Token Ring
+El Token Ring es un Struct para cada instancia de shop que contiene los siguientes campos:
+```rs
+pub struct TokenRing{
+    sender_join_handle: JoinHandle<Result<(), TokenRingError>>,
+    receiver_join_handle: JoinHandle<Result<(), TokenRingError>>,
+    node_addr: SocketAddr,
+    socket: UdpSocket,
+}
+```
+Donde:
+* `sender_join_handle`: Es el JoinHandle del thread que se encarga de enviar los mensajes del Token Ring.
+* `receiver_join_handle`: Es el JoinHandle del thread que se encarga de recibir los mensajes del Token Ring.
+* `node_addr`: Es la direccion del nodo actual.
+* `socket`: Es el socket UDP que se usa para enviar y recibir mensajes al `TokenRingReceiver`.
+
+El struct funciona como un wrapper para iniciar y terminar con el `TokenRingReceiver` y el `TokenRingSender`, ademas de que puede conectar y desconectar ambos threads del Token Ring.
+
+## TokenRingReceiver
+El `TokenRingReceiver` es el thread que se encarga de recibir los mensajes que circulan a traves del Token Ring. Esta implementado de la siguiente forma:
+```rs
+pub struct TokenRingReceiver{
+    node_id: u16,
+    socket: UdpSocket,
+    ecommerce_addr: Addr<Ecommerce>,
+    msg_sender: Sender<RingMessage>,
+    ring_addresses: SharedRingAddresses,
+    ring_topology: SharedRingTopology,
+    created_messages: SharedCreatedMessages,
+    connected: bool 
+}
+```
+Donde:
+* `node_id`: Es el id del nodo actual.
+* `socket`: Es el socket UDP que se usa para recibir mensajes, ya sea de otros nodos conectados al Token Ring o de, por ejemplo, el Ecommerce para mandar un mensaje de una request.
+* `ecommerce_addr`: Es el Address del Ecommerce, y se usa para poder mandarle mensajes al Ecommerce.
+* `msg_sender`: Es el Sender end de un `mpsc::channel`, y se usa para poder mandarle mensajes al `TokenRingSender`.
+* `ring_addresses`: Es un hash map que contiene como clave el id de un nodo, y como valor la direccion del socket UDP de ese nodo.
+* `ring_topology`: Es una cola que contiene las ids de los nodos conectados al Token Ring relativos al nodo actual.
+* `created_messages`: Es un struct que contiene un hash map que tiene como clave el id de un mensaje, y como valor el mensaje en cuestion
+* `connected`: Es un booleano que indica si el nodo actual esta conectado al Token Ring o no.
+
+Los campos que tienen el prefijo `Shared` son aquellos que son compartidos entre el `TokenRingReceiver` y el `TokenRingSender`, y se usan para poder comunicarse entre si. Estos estan detras de un `Arc<Mutex<T>>` para poder ser compartidos entre threads de forma segura.
+
+El `TokenRingReceiver` se encarga de recibir los mensajes que circulan a traves del Token Ring, y de mandarle los mensajes al `TokenRingSender` para que este los mande al siguiente nodo. Para esto, el `TokenRingReceiver` se queda escuchando sobre el socket UDP, y cuando recibe un mensaje, lo procesa y lo manda al `TokenRingSender` para que este lo mande al siguiente nodo.
+
+## TokenRingSender
+El `TokenRingSender` es el thread que se encarga de enviar los mensajes que circulan a traves del Token Ring. El envio de mensajes a traves del Token Ring se realiza siguiendo el metodo `stop-and-wait`. Para esto, implementamos una ventana de mensajes llamada `Window`, de esta forma podemos tener varios mensajes circulando a traves del Token Ring al mismo tiempo, mandados por el mismo nodo. 
+A su vez, como la comunicacion se hace a través de un socket UDP, no tenemos la garantia de que el mensaje llegue a destino, por lo que implementamos un mecanismo de reenvio de mensajes. Este mecanismo se basa en un timeout, y si el mensaje no llega a destino en un tiempo determinado, se lo vuelve a mandar. Para chequear si el mensaje llego a destino, uno de los mensajes que se mandan es un ACK, y si el nodo que manda el mensaje no recibe el ACK en el timeout, se lo vuelve a mandar. 
+
+Si un mensaje timeoutea muchas veces, se considera que el nodo al que se le esta mandando el mensaje se desconecto del Token Ring, y se lo saca de la topologia del Token Ring. Esto se hace para evitar que se queden nodos desconectados del Token Ring, y que se queden esperando mensajes que nunca van a llegar, y tambien causando un corte en la comunicacion con los otros nodos.
+
+Si un mensaje se quiere mandar cuando la ventana esta llena, se lo guarda en una cola de mensajes, y cuando se libera un lugar en la ventana, se manda el mensaje que esta en la cola. De todas formas existe un metodo del `TokenRingSender` que permite mandar un mensaje sin importar si la ventana esta llena o no para casos especificos.
