@@ -85,13 +85,13 @@ impl TokenRingReceiver {
         if coordinate_request.did_full_lap(self.node_id) {
             if let Some(coordinate_request_result) = coordinate_request.get_result(self.node_id) {
                 if coordinate_request_result.winner_id != self.node_id {
-                    print("Request did full lap, i am not the winner".to_string());
+                    print("Request did full lap, I am NOT the winner".to_string());
                     msg_to_send.push(RingMessage::from_coordinated_request_result(
                         coordinate_request_result,
                     ));
                 } else {
                     ecommerce_msg = EcommerceMsg::Request(coordinate_request_result.request);
-                    print("Request did full lap, i am the winner".to_string());
+                    print("Request did full lap, I am the winner".to_string());
                 }
             }
         } else {
@@ -130,8 +130,8 @@ impl TokenRingReceiver {
         Ok((msg_to_send, ecommerce_msg))
     }
 
-    // Handles a message related to the ecommerce: given the message, it handles the request
-    // and returns the message that should be sent to the Ecommerce actor
+    /// Handles a message related to the ecommerce: given the message, it handles the request
+    /// and returns the message that should be sent to the Ecommerce actor
     fn handle_ecommerce_related_message(
         &mut self,
         msg: RingMessage,
@@ -350,9 +350,7 @@ impl TokenRingReceiver {
 
         let resend_msgs = match msg.header.msg_type {
             RingMessageType::CoordinateRequest => self.handle_ecommerce_related_message(msg)?,
-            RingMessageType::CoordinatedRequestResult => {
-                self.handle_ecommerce_related_message(msg)?
-            }
+            RingMessageType::CoordinatedRequestResult => self.handle_ecommerce_related_message(msg)?,
             RingMessageType::NodeConnection => self.handle_node_connection(msg)?,
             RingMessageType::NodeDisconnected => self.handle_node_disconection_message(msg)?,
             RingMessageType::ConfirmConnection => self.handle_confirm_connection(msg)?,

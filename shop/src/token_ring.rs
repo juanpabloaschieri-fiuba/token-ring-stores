@@ -34,7 +34,7 @@ pub enum TokenRingError {
     EndOfProgram,
 }
 
-pub struct TokenRing {
+pub struct TokenRingNode {
     sender_join_handle: JoinHandle<Result<(), TokenRingError>>,
     receiver_join_handle: JoinHandle<Result<(), TokenRingError>>,
     topology: SharedRingTopology,
@@ -42,14 +42,14 @@ pub struct TokenRing {
     socket: UdpSocket,
 }
 
-impl TokenRing {
+impl TokenRingNode {
     pub fn new(
         node_addr: SocketAddr,
         ring_node_addr: Option<SocketAddr>,
         ecommerce_addr: Addr<Ecommerce>,
         msg_sender: Sender<RingMessage>,
         msg_receiver: Receiver<RingMessage>,
-    ) -> Result<TokenRing, TokenRingError> {
+    ) -> Result<TokenRingNode, TokenRingError> {
         let socket =
             UdpSocket::bind(node_addr).map_err(|_| TokenRingError::ErrorInitializingNode)?;
         let mut topology = VecDeque::new();
@@ -104,7 +104,7 @@ impl TokenRing {
         let receiver_join_handle = thread::spawn(move || run_receiver(tr_receiver));
 
         print("Created".to_string());
-        Ok(TokenRing {
+        Ok(TokenRingNode {
             sender_join_handle,
             receiver_join_handle,
             topology,
@@ -209,7 +209,7 @@ fn run_receiver(mut tr_receiver: TokenRingReceiver) -> Result<(), TokenRingError
         }
     }
     tr_receiver.signal_end_of_program_to_sender();
-    print(format!("receiver finished: {:?}", res));
+    print(format!("Receiver finished: {:?}", res));
     res
 }
 

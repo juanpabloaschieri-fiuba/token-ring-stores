@@ -8,3 +8,4 @@ pub mod token_ring;
 pub mod token_ring_messages;
 pub mod token_ring_receiver;
 pub mod token_ring_sender;
+pub mod terminal_commands;
