@@ -1,0 +1,4 @@
+0,0
+zapatilla,1,5
+remera,2,4
+gorra,3,6
