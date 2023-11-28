@@ -1,7 +1,5 @@
-use std::collections::VecDeque;
 use actix::{Message, Addr};
-use rand::AsByteSliceMut;
-use crate::{point::Point, shop::ShopError, ecomerce::{EcommerceError, Ecommerce}, token_ring_messages::{RingMessageHeader, RingMessage, ByteConvertable}, token_ring::TokenRingError};
+use crate::{point::Point, shop::ShopError, ecomerce::{EcommerceError, Ecommerce}, token_ring_messages::ByteConvertable, token_ring::TokenRingError};
 
 const POINT_SIZE: usize = 8;
 
@@ -28,8 +26,9 @@ impl Request{
     }
 
     pub fn to_bytes(&self)->Vec<u8>{
-        let mut bytes: Vec<u8> = self.product_ids.iter().map(|distance| distance.to_be_bytes()).flatten().collect();
-        bytes.extend(self.product_amount.iter().map(|distance| distance.to_be_bytes()).flatten());
+        let mut bytes: Vec<u8> = self.product_ids.iter().flat_map(|distance| distance.to_be_bytes()).collect();
+
+        bytes.extend(self.product_amount.iter().flat_map(|distance| distance.to_be_bytes()));
         bytes.extend(self.destination.to_bytes());
         bytes
     }
@@ -54,7 +53,7 @@ impl Request{
             product_amounts.push(u32::from_be_bytes(amount));
         };
         
-        Ok(Request::new(product_ids, product_amounts, Point::from_bytes(&bytes.to_vec())?))
+        Ok(Request::new(product_ids, product_amounts, Point::from_bytes(bytes)?))
     }
 
     /// Returns the amount of diferent products that the request contains

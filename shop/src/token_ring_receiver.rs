@@ -1,10 +1,7 @@
-use std::f32::consts::E;
 use std::net::{UdpSocket, SocketAddr};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-use std::collections::{VecDeque, HashMap, BinaryHeap};
-use actix::{Addr, Message};
-use rand::seq::IteratorRandom;
+use std::collections::{VecDeque, HashMap};
+use actix::Addr;
 use colored::*;
 
 const MAX_BUFFER_SIZE: usize = 65535;
@@ -38,8 +35,7 @@ pub struct TokenRingReceiver{
 
 impl TokenRingReceiver{
     
-    /// Creates a new TokenRingReceiver
-    
+    /// Creates a new TokenRingReceiver  
     pub fn new(node_id: u16, msg_sender: Sender<RingMessage>, ring_nodes: SharedRingTopology,ring_addresses: SharedRingAddresses, created_messages: SharedCreatedMessages, socket: UdpSocket,ecommerce_addr: Addr<Ecommerce>) -> TokenRingReceiver{
         TokenRingReceiver {node_id, socket, ecommerce_addr, msg_sender, ring_addresses, ring_topology: ring_nodes, created_messages, connected: true}
     }
@@ -59,15 +55,6 @@ impl TokenRingReceiver{
         
         Ok(Some((RingMessage::from_bytes(&received_bytes)?,addr)))
     }
-    
-    /// Returns true if the message was sent from inside the topology
-    fn message_sent_from_inside_topolgy(&self,msg: &RingMessage, addr: SocketAddr)->Result<bool,TokenRingError>{
-        let addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-        match addresses.get(&msg.last_sent_by()){
-            Some(id_addr) => Ok(addr == *id_addr),
-            None => Ok(false),
-        }
-    }
 
     /// Handles a CoordinateRequest message
     fn handle_coordinate_request(&mut self, msg: RingMessage)-> Result<(Vec<RingMessage>, EcommerceMsg),TokenRingError>{
@@ -77,15 +64,15 @@ impl TokenRingReceiver{
         if coordinate_request.did_full_lap(self.node_id){
             if let Some(coordinate_request_result) = coordinate_request.get_result(self.node_id){
                 if coordinate_request_result.winner_id != self.node_id{
-                    print(format!("Request did full lap, i am not the winner"));
+                    print("Request did full lap, i am not the winner".to_string());
                     msg_to_send.push(RingMessage::from_coordinated_request_result(coordinate_request_result));
                 } else {
                     ecommerce_msg = EcommerceMsg::Request(coordinate_request_result.request);
-                    print(format!("Request did full lap, i am the winner"));
+                    print("Request did full lap, i am the winner".to_string());
                 }
             }
         } else {
-            print(format!("Continuando la lap"));
+            print("Continuando la lap".to_string());
             ecommerce_msg = EcommerceMsg::Coordinaterequest(coordinate_request);
         }
         
@@ -141,7 +128,6 @@ impl TokenRingReceiver{
 
     /// Initializes the node by receiving a NodeConnection message and sending it to the rest of the topology
     fn initialize_node(&mut self, msg: NodeConnection)-> Result<Vec<RingMessage>, TokenRingError>{
-        let msg_clone = msg.clone();
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         if msg.amount_of_peers != 0{
@@ -182,7 +168,7 @@ impl TokenRingReceiver{
 
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-        if ring_addresses.values().find(|addr| **addr == connection_msg.new_node_addr).is_some(){
+        if ring_addresses.values().any(|addr| *addr == connection_msg.new_node_addr){
             return Ok(messages_to_send);
         }
 
@@ -192,10 +178,10 @@ impl TokenRingReceiver{
                 connection_msg.topology_addresses.push(ring_addresses[id])
             }
             connection_msg.topology_ids.push_back(self.node_id+1);
-            connection_msg.topology_addresses.push(connection_msg.new_node_addr.clone());
+            connection_msg.topology_addresses.push(connection_msg.new_node_addr);
             connection_msg.amount_of_peers = connection_msg.topology_ids.len() as u16;
             ring_topology.push_front(self.node_id + 1);
-            ring_addresses.insert(self.node_id + 1, connection_msg.new_node_addr.clone());
+            ring_addresses.insert(self.node_id + 1, connection_msg.new_node_addr);
         }
         
         Ok(vec![RingMessage::from_node_connection(connection_msg)])
@@ -207,7 +193,7 @@ impl TokenRingReceiver{
         
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-        if !ring_addresses.contains_key(&cc_msg.node_id){
+        if let std::collections::hash_map::Entry::Vacant(e) = ring_addresses.entry(cc_msg.node_id) {
             let min = ring_topology.iter().enumerate().min_by(|a,b| a.1.cmp(b.1)).unwrap();
             let mut aux = -1;
             for i in min.0..ring_topology.len()-1{
@@ -228,7 +214,7 @@ impl TokenRingReceiver{
                 aux = min.0 as i32;
             }
             ring_topology.insert(aux as usize, cc_msg.node_id);
-            ring_addresses.insert(cc_msg.node_id, cc_msg.addr);
+            e.insert(cc_msg.addr);
         }
         
         let msg = RingMessage::from_confirm_connection(cc_msg);
@@ -248,17 +234,15 @@ impl TokenRingReceiver{
             return Ok(())
         }
         print(format!("Before handeling msg of type: {:?} {:?}, received from {:?} con firmas {:?}", msg.header.msg_type, msg.header.id, addr, msg.signatures));
-        print(format!("-----------------------------------------------------------------------------"));
+        print("-----------------------------------------------------------------------------".to_string());
         msg.header.sender_addr = Some(addr);
         if msg.header.msg_type != RingMessageType::SendAck {
             let mut received_ack = RingMessage::new_ack(msg.header.id, RingMessageType::SendAck);
             received_ack.header.sender_addr = Some(addr);
             self.msg_sender.send(received_ack).map_err(|_| TokenRingError::ErrorSharingData)?;
             
-            if msg.header.is_from_node(self.node_id){
-                if self.created_messages.remove(&msg.header.id)?.is_none(){
-                    return Ok(())
-                }
+            if msg.header.is_from_node(self.node_id) && self.created_messages.remove(&msg.header.id)?.is_none(){
+                return Ok(())
             }
         }
         
@@ -290,7 +274,7 @@ impl TokenRingReceiver{
         }
         let msg = SetConnectionStatus::from_ring_message(msg)?;
         self.connected = msg.new_connection_status;
-        if msg.new_connection_status == false{
+        if !msg.new_connection_status{
             self.node_id = u16::MAX;
         }
 
@@ -300,16 +284,10 @@ impl TokenRingReceiver{
 
     /// Receives a message from the socket and handles it
     pub fn recv_and_handle(&mut self)->Result<(), TokenRingError>{
-        let (mut msg, addr) = match self.recv_from(){
+        let (msg, addr) = match self.recv_from(){
             Ok(received) => match received{
                 Some((msg, addr)) => {
                     match msg.header.msg_type {
-                        //RingMessageType::NodeDisconnected => {
-                        //    if !self.message_sent_from_inside_topolgy(&msg,addr)?{
-                        //        return Ok(())
-                        //    }
-                        //    (msg,addr)
-                        //},
                         RingMessageType::EndOfProgram => return Err(TokenRingError::EndOfProgram),
                         _ => (msg,addr),
                     }
@@ -343,7 +321,7 @@ impl TokenRingReceiver{
     }
 
     pub fn signal_end_of_program_to_sender(self){
-        self.msg_sender.send(RingMessage::new_end_of_program());
+        let _ = self.msg_sender.send(RingMessage::new_end_of_program());
     }
 }
 
@@ -432,7 +410,7 @@ mod test {
 
     #[actix_rt::test]
     async fn test_2_when_receiving_unfinished_coordinate_request_it_is_given_to_ecommerce()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10200);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10200);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinate_request = CoordinateRequest::new(MsgId::from_node(0), Vec::new(), request.amount_of_diferent_products() as u8, Vec::new(), request);
         let msg = RingMessage::from_coordinate_request(coordinate_request);
@@ -443,7 +421,7 @@ mod test {
 
     #[actix_rt::test]
     async fn test_3_when_receiving_finished_coordinate_request_and_i_am_not_the_winner_the_result_is_sent()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10300);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10300);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinate_request = CoordinateRequest::new(MsgId::from_node(0), vec![0,1,2,3], request.amount_of_diferent_products() as u8, vec![5,-1,3,4], request);
         let msg = RingMessage::from_coordinate_request(coordinate_request);
@@ -457,7 +435,7 @@ mod test {
     
     #[actix_rt::test]
     async fn test_4_when_receiving_finished_coordinate_request_and_i_am_the_winner_the_result_is_not_sent()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10400);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10400);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinate_request = CoordinateRequest::new(MsgId::from_node(0), vec![0,1,2,3], request.amount_of_diferent_products() as u8, vec![0,-1,3,4], request);
         let msg = RingMessage::from_coordinate_request(coordinate_request);
@@ -469,7 +447,7 @@ mod test {
     
     #[actix_rt::test]
     async fn test_5_when_no_one_wins_no_result_is_sent()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10500);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10500);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinate_request = CoordinateRequest::new(MsgId::from_node(0), vec![0,1,2,3], request.amount_of_diferent_products() as u8, vec![-1,-1,-1,-1], request);
         let msg = RingMessage::from_coordinate_request(coordinate_request);
@@ -481,7 +459,7 @@ mod test {
 
     #[actix_rt::test]
     async fn test_6_when_result_is_received_and_i_havent_won_it_is_fowarded()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10600);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10600);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinated_request_result = CoordinatedRequestResult::new(MsgId::new(2, 0), vec![2,3], 1, request.amount_of_diferent_products() as u8, request);
         let msg = RingMessage::from_coordinated_request_result(coordinated_request_result);
@@ -493,7 +471,7 @@ mod test {
 
     #[actix_rt::test]
     async fn test_7_when_result_is_received_and_i_have_won_it_is_fowarded_and_sent_to_eccomerce()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10700);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10700);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinated_request_result = CoordinatedRequestResult::new(MsgId::new(2, 0), vec![2,3], 0, request.amount_of_diferent_products() as u8, request);
         let msg = RingMessage::from_coordinated_request_result(coordinated_request_result);
@@ -505,7 +483,7 @@ mod test {
 
     #[actix_rt::test]
     async fn test_8_result_did_full_lap_but_winner_didnt_sign_so_new_coordinate_request_starts()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10800);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10800);
         let request =Request::new(vec![0,1], vec![30,45],Point::new(2,10));
         let coordinated_request_result = CoordinatedRequestResult::new(MsgId::new(0, 0), vec![0,2,3], 1, request.amount_of_diferent_products() as u8, request);
         let msg = RingMessage::from_coordinated_request_result(coordinated_request_result);
@@ -518,7 +496,7 @@ mod test {
     
     #[actix_rt::test]
     async fn test_9_can_delete_peer_from_topology()->Result<(), TokenRingError>{
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(3,10900);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(3,10900);
         let node_disconected = NodeDisconnected::new(MsgId::new(2, 0), vec![2], 3);
         
         let msg = RingMessage::from_node_disconected(node_disconected);
@@ -580,7 +558,7 @@ mod test {
         let addr1 = SocketAddr::from_str("127.0.0.1:11301").unwrap();
         let addr2 = SocketAddr::from_str("127.0.0.1:11302").unwrap();
         let addr3 = SocketAddr::from_str("127.0.0.1:11303").unwrap();
-        let (mut tr_receiver, msg_receiver) = create_token_ring_receiver(0,11300);
+        let (mut tr_receiver, _msg_receiver) = create_token_ring_receiver(0,11300);
         tr_receiver.node_id = u16::MAX;
         tr_receiver.ring_topology.lock().unwrap().extend([0,1]);
         {let mut ring_addresses = tr_receiver.ring_addresses.lock().unwrap();
@@ -649,7 +627,7 @@ mod test {
             let addr = SocketAddr::from_str("127.0.0.1:11603").unwrap();
             let msg = ConfirmConnection::new(MsgId::new(0,i), vec![0], 3, addr);
             let mut msg = RingMessage::from_confirm_connection(msg);
-            tr_receiver.created_messages.insert(msg.header.id, msg.clone());
+            tr_receiver.created_messages.insert(msg.header.id, msg.clone())?;
             msg.sign(1);
             msg.sign(2);
             messages.push(msg);

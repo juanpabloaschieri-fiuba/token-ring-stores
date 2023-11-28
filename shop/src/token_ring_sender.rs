@@ -1,22 +1,16 @@
-use std::fmt::format;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::process::id;
-use std::sync::mpsc::{Sender, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::collections::{VecDeque, HashMap, BinaryHeap};
-use std::time::{Instant, Duration};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::collections::{VecDeque, HashMap};
+use std::time::Duration;
 use chrono::Utc;
 use colored::*;
 
-use crate::messages;
 use crate::token_ring::*;
 use crate::token_ring_messages::*;
 
 const WINDOW_SIZE: u8 = 15;
 const PEER_TIMEOUT_MS: i64 = 1000;
 const MAX_PEER_TIMEOUT : u8 = 4;
-
-static mut contador: i32 = 0;
 
 
 /// Struct that represents the Token Ring Sender to send messages in the Token Ring.
@@ -140,7 +134,7 @@ impl TokenRingSender {
             None => return Ok(())
         };
         if let Some(msg) = self.created_messages.remove(&final_time.id)?{
-            print(format!("Se reenvia por TO de created el mensaje al next peer {:?} de tipo {:?}, {:?}, tiene las firmas {:?}", self.message_window.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
+            print(format!("Resending  {:?} de tipo {:?}, {:?}, tiene las firmas {:?}", self.message_window.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
             if msg.header.id.is_from_node(self.message_window.node_id){
                 self.send_with_priority(msg, true)?;
             }
@@ -164,7 +158,7 @@ impl TokenRingSender {
 
     /// Deletes the next peer from the topology and addresses and returns the id and address of the next peer.
     fn delete_peer_from_topology(&mut self) -> Result<(u16, SocketAddr), TokenRingError>{
-        println!("entre al delete");
+        print!("Deleting next peer from topology");
 
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
@@ -173,8 +167,7 @@ impl TokenRingSender {
         ring_addresses.remove(&removed_id).ok_or(TokenRingError::ErrorDisconnected)?;
 
         let next_id = ring_topology.front().ok_or(TokenRingError::ErrorDisconnected)?;
-        let addr = ring_addresses.get(next_id).ok_or(TokenRingError::ErrorDisconnected)?.clone();
-        println!("al salir del delete{:?}", addr);
+        let addr = *ring_addresses.get(next_id).ok_or(TokenRingError::ErrorDisconnected)?;
         Ok((removed_id, addr))
     }
 
@@ -190,18 +183,7 @@ impl TokenRingSender {
 
         Ok(())
     }
-
-    /// Receives a MsgId and removes it from the created messages and the final times created messages.
-    fn remove_created_message(&mut self, msg_id: MsgId)->Result<(), TokenRingError>{
-        self.created_messages.remove(&msg_id)?;
-        let position = self.final_times_created_messages.iter().position(|time| time.id == msg_id);
-        if let Some(position) = position{
-            self.final_times_created_messages.remove(position);
-        }
-        Ok(())
-    }
     
-
     /// Receives a RingMessage with the type NodeConnection and it updates the next peer of the window
     pub fn update_next_peer(&mut self, mut msg: RingMessage)->Result<Option<RingMessage>, TokenRingError>{
 
@@ -253,7 +235,7 @@ impl TokenRingSender {
         let connect_msg = SetConnectionStatus::from_ring_message(msg)?;
         let node_addr = {
             let addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
-            addresses.get(&u16::MAX).ok_or(TokenRingError::ErrorDisconnected)?.clone()
+            *addresses.get(&u16::MAX).ok_or(TokenRingError::ErrorDisconnected)?
         };
         let msg = match connect_msg.connect_to {
             Some(addr) => {
@@ -285,7 +267,7 @@ impl TokenRingSender {
     }
 
     /// Receives a RingMessage and it processes it depending on the type of message.
-    pub fn process_msg(&mut self, mut msg: RingMessage)-> Result<(),TokenRingError>{
+    pub fn process_msg(&mut self, msg: RingMessage)-> Result<(),TokenRingError>{
         if !self.connected && msg.header.msg_type != RingMessageType::SetConnectionStatus{
             return Ok(())
         }
@@ -328,7 +310,7 @@ impl TokenRingSender {
     fn send_acknowledgement(&mut self, ack_msg: &RingMessage )-> Result<(),TokenRingError>{
         if let Some(addr) = ack_msg.header.sender_addr{
             print(format!("El mensaje a enviar en el sender es de tipo {:?}, {:?}, se lo mandamos a {:?}", "ACK", ack_msg.header.id, ack_msg.header.sender_addr));
-            self.message_window.socket.send_to(&mut ack_msg.to_bytes(), addr).map_err(|_| TokenRingError::ErrorSendingMsg)?;
+            self.message_window.socket.send_to(&ack_msg.to_bytes(), addr).map_err(|_| TokenRingError::ErrorSendingMsg)?;
         }
 
         Ok(())
@@ -364,26 +346,12 @@ impl FinalTime{
 
 impl Ord for FinalTime{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.time.cmp(&other.time){
-            std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
-            std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
-            std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
-        }
+        other.time.cmp(&self.time)
     }
 }
 
 impl PartialOrd for FinalTime{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if let Some(ordering) = self.time.partial_cmp(&other.time){
-            let ordering = match ordering{
-                std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
-                std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
-                std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
-            };
-            return Some(ordering)
-        }
-        None
-    }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {Some(self.cmp(other))}
 }
 
 /// Implementation for a Message Window, used for the Token Ring Sender.
@@ -474,10 +442,7 @@ impl Window{
 
     /// Receives a RingMessage and it removes it from the window if it is in it.
     fn acknowledge_sent_msg(&mut self, msg: RingMessageHeader){
-        //print(format!("entre a acknowledgement msg con el id {:?}", msg.id));
         if self.messages.remove(&msg.id).is_some(){
-            let b: Vec<&MsgId> = self.messages.iter().map(|(id ,msg)| id).collect();
-            //print(format!("Saque de la ventana a {:?}, la ventana esta como {:?}", msg.id, b));
             self.remove_final_time(&msg.id)
         }
     }
@@ -511,7 +476,7 @@ impl Window{
             return Err(TokenRingError::ErrorTimedOutTooManyTimes)
         }
 
-        if let Some(mut msg) = self.messages.remove(&final_time.id){
+        if let Some(msg) = self.messages.remove(&final_time.id){
             print(format!("Se reenvia por TO de Window el mensaje al next peer {:?} de tipo {:?}, {:?}, tiene las firmas {:?}", self.next_peer,msg.header.msg_type, msg.header.id, msg.signatures));
             self.socket.send_to(&msg.to_bytes(), self.next_peer).map_err(|_| TokenRingError::ErrorSendingMsg)?;
             final_time.time = Utc::now().timestamp_millis() + PEER_TIMEOUT_MS;
@@ -572,14 +537,14 @@ fn smallest_timeout(final_times: &VecDeque<FinalTime>)->Option<Duration>{
 }
 
 fn print(string: String){
-    println!("{} {} \n{}","[TokenRingSender] ".blue(), string, "-------------------------------------------------------------------");
+    println!("{} {} \n-------------------------------------------------------------------","[TokenRingSender] ".blue(), string);
 
 }
 
 #[cfg(test)]
 pub mod test {
-    use std::{sync::mpsc, str::FromStr};
-
+    use std::{sync::{mpsc, Arc, Mutex}, str::FromStr, net::IpAddr};
+    use std::sync::mpsc::Sender;
     use super::*;
 
     pub fn create_topology(amount_of_peers: u16, port: u16)->(SharedRingTopology, SharedRingAddresses){
@@ -641,7 +606,7 @@ pub mod test {
 
     #[test]
     fn test_1_when_sending_messages_they_are_added_to_the_window()->Result<(), TokenRingError>{
-        let (mut tr_sender, mut msg_sender) = create_token_ring_sender(3, 11000);
+        let (mut tr_sender, _msg_sender) = create_token_ring_sender(3, 11000);
         let msg = create_n_messages_from(1,0).remove(0);
 
         assert_eq!(tr_sender.message_window.messages.len(), 0);
@@ -872,8 +837,8 @@ pub mod test {
 
     #[test]
     fn test_12_create_disconected_topology_by_pointing_to_yourself()-> Result<(), TokenRingError>{
-        let (mut tr_sender,  msg_sender) = create_token_ring_sender(1,22000);
-        let mut msg = create_n_messages_from(1,0).remove(0);
+        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(1,22000);
+        let msg = create_n_messages_from(1,0).remove(0);
         tr_sender.message_window.socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
         tr_sender.send(msg)?;
 
@@ -951,7 +916,7 @@ pub mod test {
         let (mut tr_sender,  _msg_sender) = create_token_ring_sender(1, 25000);
         let new_node_addr = SocketAddr::from_str("127.0.0.1:25002").unwrap();
         let socket = UdpSocket::bind("127.0.0.1:25001").unwrap();
-        let mut nc_msg = NodeConnection::start(new_node_addr);
+        let nc_msg = NodeConnection::start(new_node_addr);
         let mut msg = RingMessage::from_node_connection(nc_msg);
 
         tr_sender.process_msg(msg.clone())?;
@@ -1003,7 +968,7 @@ pub mod test {
         socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         let nc_msg = NodeConnection::start(addr);
         let msg = RingMessage::from_node_connection(nc_msg);
-        tr_sender.created_messages.insert(MsgId::new(255, 0), msg);
+        tr_sender.created_messages.insert(MsgId::new(255, 0), msg)?;
         tr_sender.final_times_created_messages.push_back(FinalTime::from_timeout(0, MsgId::new(255, 0)));
 
         tr_sender.handle_timeout()?;

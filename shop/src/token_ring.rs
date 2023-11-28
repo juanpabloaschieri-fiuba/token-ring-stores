@@ -1,16 +1,13 @@
-use std::str::FromStr;
 use std::sync::mpsc::{Sender, Receiver};
-use std::sync::{Arc, Mutex, mpsc, RwLock};
-use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::collections::{VecDeque, HashMap, BinaryHeap};
+use std::sync::{Arc, Mutex};
+use std::net::{SocketAddr, UdpSocket};
+use std::collections::{VecDeque, HashMap};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use actix::Addr;
 
-use crate::delivery::DeliveryError;
+
 use crate::ecomerce::Ecommerce;
-use crate::request_simulator::SimulationError;
 use crate::token_ring_messages::{NodeConnection, RingMessage, MsgId, SetConnectionStatus, ByteConvertable};
 use crate::token_ring_sender::TokenRingSender;
 use crate::token_ring_receiver::TokenRingReceiver;
@@ -49,7 +46,7 @@ impl TokenRing{
         let mut topology = VecDeque::new();
         let mut addresses = HashMap::new();
         let mut stablished_ring = true;
-        let mut next_peer = match ring_node_addr{
+        let next_peer = match ring_node_addr{
             Some(ring_node_addr) => {
                 topology.extend([0, u16::MAX]);
                 addresses.insert(0, ring_node_addr);
@@ -149,7 +146,7 @@ fn run_receiver(mut tr_receiver: TokenRingReceiver) -> Result<(), TokenRingError
     res
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SharedCreatedMessages{
     created_messages :Arc<Mutex<HashMap<MsgId, RingMessage>>>,
 }

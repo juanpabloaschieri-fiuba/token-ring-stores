@@ -7,9 +7,9 @@ use std::thread::JoinHandle;
 use rand::Rng;
 use std::net::UdpSocket;
 use std::time::Duration;
-use actix::prelude::{Addr};
+use actix::prelude::Addr;
 use colored::*;
-use crate::shop::{*, self};
+use crate::shop::*;
 use crate::messages::*;
 use crate::point::*;
 use crate::token_ring_messages::{CoordinateRequest, MsgId, RingMessage, ByteConvertable};
@@ -36,7 +36,8 @@ impl SimulatedRequest{
 
     fn set_physical_request_randomly(&mut self)->bool{
         let shop_location = self.request.destination;
-        if !(rand::thread_rng().gen_range(0.0, 1.0) < PHYSICAL_REQUEST_RATIO){
+
+        if rand::thread_rng().gen_range(0.0, 1.0) >= PHYSICAL_REQUEST_RATIO{
             self.request.destination = Point::new(rand::thread_rng().gen_range(-15, 15), rand::thread_rng().gen_range(-15, 15));
             while shop_location == self.request.destination{
                 self.request.destination = Point::new(rand::thread_rng().gen_range(-15, 15), rand::thread_rng().gen_range(-15, 15));
@@ -48,7 +49,8 @@ impl SimulatedRequest{
 
     fn handle(mut self, shop_addr: &Addr<Shop>, socket: &UdpSocket, ecommerce_socket_addr: &SocketAddr, finish_receiver: &Receiver<bool>)->Result<(),SimulationError>{
         println!("Simulator: Voy a dormir por: {:?}",self.delay);
-        if let Ok(finish) = finish_receiver.recv_timeout(self.delay){
+
+        if finish_receiver.recv_timeout(self.delay).is_ok(){
             return Err(SimulationError::EndOfSimulation)
         }
         if self.set_physical_request_randomly(){
@@ -127,7 +129,7 @@ pub fn simulate(path:String, n: u16,shop_addr: Addr<Shop>, shop_location: Point,
 
 /// Reads the delay part of the physical request from the file
 fn read_delay(reader: &mut BufReader<File>) -> Result<Duration, SimulationError> {
-    let delay = read_line(reader).map_err(|file_error| SimulationError::FileError(file_error))?;
+    let delay = read_line(reader).map_err(SimulationError::FileError)?;
     let delay: u32 = delay.parse().map_err(|_| SimulationError::ErrorParsingData)?;
     Ok(Duration::from_secs(delay as u64))
 }
@@ -137,7 +139,7 @@ fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), Simu
     let mut request_products: Vec<u32> = Vec::new();
     let mut request_amounts: Vec<u32> = Vec::new();
 
-    let buf = read_line(reader).map_err(|file_error| SimulationError::FileError(file_error))?;
+    let buf = read_line(reader).map_err(SimulationError::FileError)?;
     let products: Vec<&str> = buf.split(';').collect();
     
     for product in products{
@@ -198,7 +200,7 @@ mod test {
 
     #[tokio::test]
     async fn test_1_read_request(){
-        let path = String::from("test_files/physical_requests_test_1.txt");
+        let path = String::from("test_files/requests_test_1.txt");
         let file = File::open(path).unwrap();
         let mut reader = BufReader::new(file);
         let request1 = read_request(&mut reader, Point::new(0,0)).unwrap();

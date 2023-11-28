@@ -1,10 +1,10 @@
 //use std::ops::IndexMut;
 
-use std::{mem::size_of, net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, AddrParseError, Ipv6Addr}, str::FromStr, collections::VecDeque};
+use std::{net::{IpAddr, Ipv4Addr, SocketAddr,Ipv6Addr},collections::VecDeque};
 
 use actix::Message;
 
-use crate::{token_ring::TokenRingError, messages::Request, point::Point};
+use crate::{token_ring::TokenRingError, messages::Request};
  
 const MSG_ID_SIZE : usize = 4;
 const FINAL_MSG_TYPE_POSITION :usize = MSG_ID_SIZE + 1;
@@ -16,7 +16,7 @@ const HEADER_SIZE :usize = FINAL_AMOUNT_OF_SIGS_POSITION + 2;
 pub trait ByteConvertable{
     type Type;
     fn to_bytes(&self)-> Vec<u8>;
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError>;
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError>;
 }
 
 /// RingMessageType is an enum that represents the type of message that is being sent
@@ -40,7 +40,7 @@ impl ByteConvertable for RingMessageType{
         vec![self.clone() as u8]
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() != 1{
             return Err(TokenRingError::ErrorInvalidByteSequence)    
         }
@@ -117,12 +117,12 @@ impl ByteConvertable for RingMessageHeader{
         bytes
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() != HEADER_SIZE{
             return Err(TokenRingError::ErrorInvalidByteSequence);
         }
-        let id = MsgId::from_bytes(&bytes[..MSG_ID_SIZE].to_vec())?;
-        let msg_type = RingMessageType::from_bytes(&bytes[MSG_ID_SIZE..FINAL_MSG_TYPE_POSITION].to_vec())?;
+        let id = MsgId::from_bytes(&bytes[..MSG_ID_SIZE])?;
+        let msg_type = RingMessageType::from_bytes(&bytes[MSG_ID_SIZE..FINAL_MSG_TYPE_POSITION])?;
         let ammount_of_signatures = u16::from_be_bytes( [bytes[FINAL_MSG_TYPE_POSITION], bytes[FINAL_MSG_TYPE_POSITION+1]]);
         let payload_size = u16::from_be_bytes( [bytes[FINAL_AMOUNT_OF_SIGS_POSITION], bytes[HEADER_SIZE-1]]);
         
@@ -180,7 +180,7 @@ impl ByteConvertable for MsgId{
         bytes
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() != MSG_ID_SIZE{//WIP poner como const
             return Err(TokenRingError::ErrorInvalidByteSequence);
         }
@@ -216,8 +216,8 @@ impl ByteConvertable for RingMessage{
         bytes
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
-        let header = RingMessageHeader::from_bytes(&bytes[..HEADER_SIZE].to_vec())?;
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
+        let header = RingMessageHeader::from_bytes(&bytes[..HEADER_SIZE])?;
         if bytes.len()-HEADER_SIZE  != (2* header.ammount_of_signatures + header.payload_size) as usize{
             return Err(TokenRingError::ErrorInvalidByteSequence)
         }
@@ -258,10 +258,10 @@ impl RingMessage {
     /// Creates a new RingMessage from a CoordinateRequest
     pub fn from_coordinate_request(msg: CoordinateRequest)->RingMessage{
         let mut payload: Vec<u8> = vec![msg.amount_of_diferent_products];
-        payload.extend(msg.distances.into_iter().map(|distance| distance.to_be_bytes()).flatten());
+        payload.extend(msg.distances.into_iter().flat_map(|distance| distance.to_be_bytes()));
         payload.extend(msg.request.to_bytes());
         let header = RingMessageHeader::_new(msg.msg_id ,RingMessageType::CoordinateRequest, msg.signatures.len() as u16, payload.len() as u16, msg.sender_addr);
-        RingMessage { header, signatures: msg.signatures, payload: payload }
+        RingMessage { header, signatures: msg.signatures, payload }
     }
 
     /// Creates a new RingMessage from a CoordinatedRequestResult
@@ -284,8 +284,8 @@ impl RingMessage {
     pub fn from_node_connection(msg: NodeConnection) ->RingMessage{
         let mut payload = msg.amount_of_peers.to_be_bytes().to_vec();
         payload.extend(msg.new_node_addr.to_bytes());
-        payload.extend(msg.topology_ids.into_iter().map(|id| id.to_be_bytes()).flatten());
-        payload.extend(msg.topology_addresses.into_iter().map(|addr| addr.to_bytes()).flatten());
+        payload.extend(msg.topology_ids.into_iter().flat_map(|id| id.to_be_bytes()));
+        payload.extend(msg.topology_addresses.into_iter().flat_map(|addr| addr.to_bytes()));
         let header = RingMessageHeader::_new(msg.msg_id, RingMessageType::NodeConnection, msg.signatures.len() as u16,payload.len() as u16, msg.sender_addr);
         RingMessage {header, signatures: msg.signatures,payload}
     }
@@ -301,13 +301,12 @@ impl RingMessage {
 
     /// Creates a new RingMessage from a SetConnectionStatus
     pub fn from_set_connection_status(msg: SetConnectionStatus)->RingMessage{
-        let mut payload = vec![if msg.new_connection_status == false { 0 } else { 1 }];
+        let mut payload = vec![if !msg.new_connection_status { 0 } else { 1 }];
         
         if let Some(connect_to) = msg.connect_to{
             payload.extend(connect_to.to_bytes())
         }
-        let mut header = RingMessageHeader::default();
-        header.payload_size = payload.len() as u16;
+        let header = RingMessageHeader{ payload_size: payload.len() as u16, ..Default::default() };
         RingMessage::new(header, payload)
     }
     
@@ -372,7 +371,6 @@ impl CoordinateRequest{
     /// Creates a new CoordinateRequest given the id of the node that created the message, the request
     /// that is being coordinated and the amount of diferent products that the request has
     pub fn start(node_id: u16, request: Request, amount_of_diferent_products: u8) -> CoordinateRequest{
-        let payload_size: usize = 1 + 2*4*(amount_of_diferent_products as usize) + 8;
         CoordinateRequest::new(MsgId::new(node_id, 255), Vec::new(), amount_of_diferent_products, Vec::new(), request)
     }
 
@@ -402,7 +400,7 @@ impl CoordinateRequest{
     /// Decides the winner of the coordination, that is, the node that is closest to the destination
     /// of the request
     pub fn decide_winner(&self) -> Option<u16>{
-        let (mut index, mut min_aux) = (0,-1 as i32);
+        let (mut index, mut min_aux) = (0,-1);
         for (i, distance) in self.distances.iter().enumerate(){
             if min_aux == -1 || (*distance >=0  && *distance < min_aux){
                 (index, min_aux) = (i, *distance)
@@ -423,7 +421,7 @@ impl CoordinateRequest{
     /// Returns the result of the coordination, that is, a CoordinatedRequestResult
     pub fn get_result(&self, node_id: u16) -> Option<CoordinatedRequestResult>{
         let winner_id = self.decide_winner()?;
-        Some(CoordinatedRequestResult::new(MsgId::from_node(node_id), Vec::new(), winner_id, self.request.amount_of_diferent_products() as u8, self.request.clone()))
+        Some(CoordinatedRequestResult::new(MsgId::from_node(node_id), Vec::new(), winner_id, self.request.amount_of_diferent_products(), self.request.clone()))
     }
 }
 
@@ -525,7 +523,7 @@ impl NodeConnection {
         let (amount_of_peers_bytes, payload) = msg.payload.split_at(2);
         let amount_of_peers = u16::from_be_bytes([amount_of_peers_bytes[0], amount_of_peers_bytes[1]]);
         let (new_addr_bytes, mut payload) = payload.split_at(6);
-        let new_node_addr = SocketAddr::from_bytes(&new_addr_bytes.to_vec())?;
+        let new_node_addr = SocketAddr::from_bytes(new_addr_bytes)?;
 
         if payload.len() != amount_of_peers as usize * (2+6){
             return Err(TokenRingError::ErrorInvalidByteSequence);
@@ -542,7 +540,7 @@ impl NodeConnection {
         let mut topology_addresses = Vec::new();
         for _i in 0..amount_of_peers{
             (aux, payload) = payload.split_at(6);
-            topology_addresses.push(SocketAddr::from_bytes(&aux.to_vec()).map_err(|_| TokenRingError::ErrorInvalidByteSequence)?);
+            topology_addresses.push(SocketAddr::from_bytes(aux).map_err(|_| TokenRingError::ErrorInvalidByteSequence)?);
         };
         Ok(NodeConnection { msg_id: msg.header.id, signatures: msg.signatures, amount_of_peers, new_node_addr, topology_ids, topology_addresses, sender_addr: msg.header.sender_addr} )
     }
@@ -582,7 +580,7 @@ impl ConfirmConnection{
         }
         let (node_id_bytes, addr_bytes) = msg.payload.split_at(2);
         let node_id = u16::from_be_bytes([node_id_bytes[0], node_id_bytes[1]]);
-        let addr = SocketAddr::from_bytes(&addr_bytes.to_vec())?; 
+        let addr = SocketAddr::from_bytes(addr_bytes)?; 
         Ok(ConfirmConnection { msg_id: msg.header.id, signatures: msg.signatures, node_id, addr, sender_addr:msg.header.sender_addr})
     }
 }
@@ -644,11 +642,11 @@ impl SetConnectionStatus{
         if !Self::valid_length(msg.payload.len()) || msg.header.msg_type != RingMessageType::SetConnectionStatus{
             return Err(TokenRingError::ErrorInvalidByteSequence);
         }
-        let status = if msg.payload[0] == 0 { false } else { true };
+        let status = msg.payload[0] != 0;
         let mut connected_to = None;    
         
         if msg.payload.len() == 7{
-            connected_to = Some(SocketAddr::from_bytes(&msg.payload[1..].to_vec())?);
+            connected_to = Some(SocketAddr::from_bytes(&msg.payload[1..])?);
         }
         
         Ok(SetConnectionStatus::new(status,connected_to))
@@ -668,16 +666,16 @@ impl ByteConvertable for SocketAddr{
         bytes
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() == 6{
             let (ip_bytes, port_bytes) = bytes.split_at(4);
-            let ip = IpAddr::from_bytes(&ip_bytes.to_vec())?;
+            let ip = IpAddr::from_bytes(ip_bytes)?;
             let port = u16::from_be_bytes([port_bytes[0], port_bytes[1]]);
             return Ok(SocketAddr::from((ip,port)));
         }
         if bytes.len() == 18{
             let (ip_bytes, port_bytes) = bytes.split_at(16);
-            let ip = IpAddr::from_bytes(&ip_bytes.to_vec())?;
+            let ip = IpAddr::from_bytes(ip_bytes)?;
             let port = u16::from_be_bytes([port_bytes[0], port_bytes[1]]);
             return Ok(SocketAddr::from((ip,port)));
         }
@@ -695,12 +693,12 @@ impl ByteConvertable for IpAddr{
         }
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() == 4{
-            let bytes:[u8;4] = bytes.clone().try_into().map_err(|_| TokenRingError::ErrorInvalidByteSequence)?;
+            let bytes:[u8;4] = bytes.try_into().map_err(|_| TokenRingError::ErrorInvalidByteSequence)?;
             return Ok(IpAddr::V4(Ipv4Addr::from(bytes)));
         }else if bytes.len() == 16{
-            let bytes:[u8;16] = bytes.clone().try_into().map_err(|_| TokenRingError::ErrorInvalidByteSequence)?;
+            let bytes:[u8;16] = bytes.try_into().map_err(|_| TokenRingError::ErrorInvalidByteSequence)?;
             return Ok(IpAddr::V6(Ipv6Addr::from(bytes)));
         }
         Err(TokenRingError::ErrorInvalidByteSequence)
@@ -709,7 +707,7 @@ impl ByteConvertable for IpAddr{
 
 #[cfg(test)]
 mod test {
-    use std::{sync::mpsc, str::FromStr, ascii::AsciiExt};
+    use std::str::FromStr;
 
     use crate::point::Point;
 

@@ -1,14 +1,13 @@
-use std::cmp::Reverse;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Condvar};
+use std::sync::mpsc;
 use std::thread::{JoinHandle, self};
-use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, Duration};
 use crate::shop::Shop;
 use crate::messages::{Request, FinishedDelivery};
 use crate::point::*;
 use std::collections::BinaryHeap;
 use rand::prelude::*;
-use actix::{Actor, Context, Handler, System, Addr, Message,};
+use actix::Addr;
 
 const TIME_PER_DISTANCE_UNIT: i32 = 1; // WIP por que lo dejamos en 1?
 const DROP_PROBABILITY: f32 = 0.1;
@@ -29,32 +28,18 @@ impl DeliveryOrder{
     }
 
     fn arrived_in_time(&self)->bool{
-        !(rand::thread_rng().gen_range(0.0, 1.0) < DROP_PROBABILITY)
+        rand::thread_rng().gen_range(0.0, 1.0) >= DROP_PROBABILITY
     }
 }
 
 impl Ord for DeliveryOrder{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.time_to_arrive.cmp(&other.time_to_arrive){
-            std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
-            std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
-            std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
-        }
+        other.time_to_arrive.cmp(&self.time_to_arrive)
     }
 }
 
 impl PartialOrd for DeliveryOrder{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if let Some(ordering) = self.time_to_arrive.partial_cmp(&other.time_to_arrive){
-            let ordering = match ordering{
-                std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
-                std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
-                std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
-            };
-            return Some(ordering)
-        }
-        None
-    }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {Some(self.cmp(other))}
 }
 
 
@@ -83,17 +68,17 @@ impl Delivery{
                 match request{
                     Some(req) => {
                         self.add_request(req);
-                        return Ok(None)
+                        Ok(None)
                     },
-                    None => return Err(DeliveryError::ErrorFinishingSimulation),
+                    None => Err(DeliveryError::ErrorFinishingSimulation),
                 }
             },
             Err(error) => {
                 if let mpsc::RecvTimeoutError::Timeout = error{
                     let delivery_order = self.ongoing_deliveries.pop();
-                    return Ok(delivery_order)
+                    Ok(delivery_order)
                 } else {
-                    return Err(DeliveryError::ErrorReceivingRequests)
+                    Err(DeliveryError::ErrorReceivingRequests)
                 }
             }
         }
@@ -104,9 +89,9 @@ impl Delivery{
         match request{
             Some(req) => {
                 self.add_request(req);
-                return Ok(None)
+                Ok(None)
             },
-            None => return Err(DeliveryError::ErrorFinishingSimulation),
+            None => Err(DeliveryError::ErrorFinishingSimulation),
         }
     }
 
@@ -177,9 +162,7 @@ pub fn deliver(shop_addr: Addr<Shop>, receiver: Receiver<Option<Request>>,shop_l
     loop{
         match delivery.wait_until_finish_or_new_delivery(){
             Ok(delivery_order) => if let Some(delivery_order) = delivery_order{
-                if let Err(error) = delivery.inform_shop(delivery_order) {
-                    return Err(error);
-                }
+                delivery.inform_shop(delivery_order)?;
             },
             Err(error) => match error{
                 DeliveryError::ErrorFinishingSimulation => return Ok(()),
