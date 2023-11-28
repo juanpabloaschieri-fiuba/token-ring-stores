@@ -18,6 +18,22 @@ pub struct Request{
     pub destination: Point,
 }
 
+impl std::fmt::Display for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut string = "Request: {[id, ammount]: ".to_string();
+        for (id, ammount) in self.product_ids.iter().zip(&self.product_amount){
+            string = format!("{}[{:?}, {:?}],", string, id, ammount);
+        }
+        string.pop();
+        string.push('}');
+        write!(
+            f,
+            "{}",
+            &string
+        )
+    }
+}
+
 impl Request{
 
     /// Creates a new Request given the product ids, the amount of each product and the destination
@@ -99,6 +115,20 @@ impl EnoughStockMsg{
 pub enum StockAvailabilityMsg{
     EnoughStock(usize, i32),
     NotEnoughStock(usize)
+}
+
+impl std::fmt::Display for StockAvailabilityMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string = match self{
+            StockAvailabilityMsg::EnoughStock(_, _) => "Enough stock for request",
+            StockAvailabilityMsg::NotEnoughStock(_) => "Not enough stock for request",
+        };
+        write!(
+            f,
+            "{}",
+            string
+        )
+    }
 }
 
 /// Enum that indicates if a delivery arrived in time or not

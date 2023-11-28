@@ -29,9 +29,6 @@ async fn load_ecommerce_addr(shop_addr: Addr<Shop>,ecommerce_addr: Addr<Ecommerc
 
 fn procces_args()->Option<(u16, SocketAddr, Option<SocketAddr>)>{
     let args: Vec<String> = std::env::args().collect();
-    //let args = vec!["nombre", "1", "127.0.0.1:10000"];
-    //let args = vec!["nombre", "0"];
-    print!("{:?}", args);
     if args.len() !=2 && args.len() !=3{
         return None
     }
@@ -108,6 +105,7 @@ async fn receive_commands(tr: &TokenRing, n:u16, shop_addr: Addr<Shop>, shop_loc
                 "simulate" => simulator = Some(start_simulator(simulator, n, &shop_addr, shop_location, node_addr)),
                 "disconnect" => tr.disconnect().map_err(Error::TokenRing)?,
                 "connect" => handle_connect_command(words, tr)?,
+                "topology" => tr.print_topology().map_err(Error::TokenRingError)?,
                 _ => continue,
             };
         }
@@ -129,11 +127,6 @@ fn finish(tr: TokenRing, simulator: Option<Simulator>, delivery_handler: Deliver
             res = Err(Error::ErrorJoiningThreads);
         };
     }   
-    // for sim in simulators{
-    //     if sim.stop().is_err(){
-    //         res = Err(Error::ErrorJoiningThreads);
-    //     };
-    // }
     System::current().stop();
     res
 }
@@ -152,9 +145,8 @@ async fn main(){
 
     let (tr, delivery_handler,shop_addr,shop_location) = match initialize(n, node_addr, ring_node_addr).await{
         Ok(handles) => handles,
-        Err(error) => return print(format!("{:?}",error)),
+        Err(error) => return print(format!("An error ocurred initializing the node: {:?}",error)),
     };
-    
     
     let simulators = match receive_commands(&tr,n,shop_addr,shop_location,node_addr).await{
         Ok(simulators) => simulators,
@@ -163,6 +155,6 @@ async fn main(){
 
     match finish(tr, simulators, delivery_handler){
         Ok(_) =>(),
-        Err(error) => print(format!("{:?}",error)),
+        Err(error) => print(format!("An error ocurred terminating the program: {:?}",error)),
     };
 }

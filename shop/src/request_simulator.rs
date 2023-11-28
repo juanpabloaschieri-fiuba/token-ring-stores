@@ -48,20 +48,18 @@ impl SimulatedRequest{
     }
 
     fn handle(mut self, shop_addr: &Addr<Shop>, socket: &UdpSocket, ecommerce_socket_addr: &SocketAddr, finish_receiver: &Receiver<bool>)->Result<(),SimulationError>{
-        println!("Simulator: Voy a dormir por: {:?}",self.delay);
-
         if finish_receiver.recv_timeout(self.delay).is_ok(){
             return Err(SimulationError::EndOfSimulation)
         }
         if self.set_physical_request_randomly(){
-            print(format!("Generating a new phisical request to the shop with addr: {:?}",shop_addr));
+            print(format!("Generating a new phisical request "));
             shop_addr.try_send(self.request).map_err(|_| SimulationError::ErrorInCommunications)?;
         } else {
-            print(format!("Generating a new online request to the addres: {}",ecommerce_socket_addr));
+            print(format!("Generating a new online request "));
             let c_request = CoordinateRequest::new(MsgId::default(), vec![], self.request.amount_of_diferent_products(), vec![], self.request);
             let bytes = RingMessage::from_coordinate_request(c_request).to_bytes();
             socket.send_to(&bytes, ecommerce_socket_addr).map_err(|_| SimulationError::ErrorInCommunications)?;
-            }
+        }
         Ok(())
     }
 }
@@ -86,6 +84,7 @@ impl Simulator{
     pub fn new(path:String, n: u16,shop_addr: Addr<Shop>, shop_location: Point, ecommerce_socket_addr: SocketAddr,)-> Simulator{
         let (finish_sender, finish_receiver) = mpsc::channel();
         let handle = thread::spawn(move || simulate(path, n, shop_addr, shop_location, ecommerce_socket_addr, finish_receiver));
+        print("Creating new simulator".to_string());
         Simulator{handle, finish_sender}
     }
 
@@ -154,11 +153,8 @@ fn read_order(reader: &mut BufReader<File>) -> Result<(Vec<u32>, Vec<u32>), Simu
 
 /// Reads the physical request from the file
 fn read_request(reader: &mut BufReader<File>,shop_location: Point) -> Result<SimulatedRequest,SimulationError>{
-    println!("hola");
     let delay = read_delay(reader)?;
-    println!("hola2");
     let (request_products, request_amounts) = read_order(reader)?;
-    println!("hola3");
     
     Ok(SimulatedRequest::new(delay,request_products,request_amounts, shop_location))
 }

@@ -22,9 +22,11 @@ use crate::token_ring_messages::*;
 /// * `msg_sender`: The sender used to send messages to the TokenRingSender
 /// * `ring_addresses`: The addresses of all the nodes in the ring
 /// * `ring_topology`: The ids of all the nodes in the ring
+/// * `created_messages`: The messages created by this node
+/// * `connected`: True if the node is connected to the ring
 pub struct TokenRingReceiver{
     node_id: u16,
-    socket: UdpSocket,              //WIP timeout in main
+    socket: UdpSocket,
     ecommerce_addr: Addr<Ecommerce>,
     msg_sender: Sender<RingMessage>,
     ring_addresses: SharedRingAddresses,
@@ -72,7 +74,6 @@ impl TokenRingReceiver{
                 }
             }
         } else {
-            print("Continuando la lap".to_string());
             ecommerce_msg = EcommerceMsg::Coordinaterequest(coordinate_request);
         }
         
@@ -106,7 +107,6 @@ impl TokenRingReceiver{
             RingMessageType::CoordinatedRequestResult => self.handle_coordinated_request_result(msg)?,
             _ => return Ok(Vec::new()),
         };
-        print(format!("Enviandole al ecomerce {:?}", ecommerce_message));
         match ecommerce_message{
             EcommerceMsg::Request(msg) => self.ecommerce_addr.try_send(msg).map_err(|_| TokenRingError::ErrorSharingData)?,
             EcommerceMsg::Coordinaterequest(msg) => self.ecommerce_addr.try_send(msg).map_err(|_| TokenRingError::ErrorSharingData)?,
@@ -233,8 +233,7 @@ impl TokenRingReceiver{
         if !self.connected{
             return Ok(())
         }
-        print(format!("Before handeling msg of type: {:?} {:?}, received from {:?} con firmas {:?}", msg.header.msg_type, msg.header.id, addr, msg.signatures));
-        print("-----------------------------------------------------------------------------".to_string());
+        print(format!("Before handeling msg of type: {:?} {:?}, received from {:?} with signatures {:?}", msg.header.msg_type, msg.header.id, addr, msg.signatures));
         msg.header.sender_addr = Some(addr);
         if msg.header.msg_type != RingMessageType::SendAck {
             let mut received_ack = RingMessage::new_ack(msg.header.id, RingMessageType::SendAck);
@@ -306,10 +305,10 @@ impl TokenRingReceiver{
 
     /// Removes a peer from the topology
     fn remove_peer_from_topology(&mut self, node_id:u16)->Result<(), TokenRingError>{
-        println!("entre al delete");
         if self.node_id == node_id{
             return Ok(())
         }
+        print(format!("Removing peer {} from topology", node_id));
         let mut ring_topology = self.ring_topology.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
         let mut ring_addresses = self.ring_addresses.lock().map_err(|_| TokenRingError::ErrorSharingData)?;
             
@@ -334,7 +333,7 @@ enum EcommerceMsg{
 }
 
 fn print(string: String){
-    println!("{} {}","[TokenRingReceiver]".yellow(), string);
+    println!("{} {}\n{}","[TokenRingReceiver]".yellow(), string, "-------------------------------------------------------------------");
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use rand::prelude::*;
 use actix::Addr;
 
-const TIME_PER_DISTANCE_UNIT: i32 = 1; // WIP por que lo dejamos en 1?
+const TIME_PER_DISTANCE_UNIT: i32 = 1;
 const DROP_PROBABILITY: f32 = 0.1;
 
 
@@ -140,7 +140,7 @@ impl DeliveryHandler{
     pub fn stop(self) -> Result<(), DeliveryError>{
         self.finish_sender.send(None).map_err(|_| DeliveryError::ErrorFinishingSimulation)?;
         let res = self.handle.join().map_err(|_| DeliveryError::ErrorJoiningSimulationThread)?;
-        println!("Delivery finished: {:?}", res);
+        println!( "{} {:?}", "[Delivery finished]: ".bright_black(), res);
         Ok(())
     }
 }

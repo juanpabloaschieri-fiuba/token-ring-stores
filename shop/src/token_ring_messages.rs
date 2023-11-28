@@ -181,7 +181,7 @@ impl ByteConvertable for MsgId{
     }
 
     fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
-        if bytes.len() != MSG_ID_SIZE{//WIP poner como const
+        if bytes.len() != MSG_ID_SIZE{
             return Err(TokenRingError::ErrorInvalidByteSequence);
         }
         let node_id = u16::from_be_bytes([bytes[0], bytes[1]]);
@@ -820,6 +820,4 @@ mod test {
 
         Ok(())
     }
-        
-    //WIP si nos dan las ganas test para mensaje Noe disconnected
 }
