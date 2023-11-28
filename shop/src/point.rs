@@ -41,14 +41,14 @@ impl ByteConvertable for Point{
     type Type=Point;
 
     fn to_bytes(&self)-> Vec<u8> {
-        vec![self.x, self.y].into_iter().map(|distance| distance.to_be_bytes()).flatten().collect()
+        vec![self.x, self.y].into_iter().flat_map(|distance| distance.to_be_bytes()).collect()
     }
 
-    fn from_bytes(bytes :&Vec<u8>) -> Result<Self::Type, TokenRingError> {
+    fn from_bytes(bytes :&[u8]) -> Result<Self::Type, TokenRingError> {
         if bytes.len() != 8{
             return Err(TokenRingError::ErrorInvalidByteSequence);
         }
-        let mut bytes = bytes.as_slice();
+        let mut bytes = bytes;
         let aux; 
         (aux, bytes) = bytes.split_at(4);
         let x:[u8;4] = aux.try_into().map_err(|_| TokenRingError::ErrorInvalidByteSequence)?;

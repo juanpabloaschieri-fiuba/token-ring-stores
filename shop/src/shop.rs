@@ -1,7 +1,7 @@
-use actix::{Actor, Context, Handler, System, Addr, Message,};
-use std::{collections::HashMap, thread, time::Duration, fs::File, io::{BufRead, BufReader}};
+use actix::{Actor, Context, Handler, Addr};
+use std::{collections::HashMap,fs::File, io::{BufRead, BufReader}};
 use std::sync::mpsc::Sender;
-use crate::{point::*, ecomerce::Ecommerce, delivery};
+use crate::{point::*, ecomerce::Ecommerce};
 use crate::messages::*;
 use colored::*;
 
@@ -115,7 +115,7 @@ impl Shop{
     /// Given a request made to the online shop, it processes the request and sends it to the
     /// delivery system. Could return an error if the shop can't deliver the package.
     fn handle_online_request(&mut self, request: &Request)-> Result<(), ShopError>{
-        self.process_request(&request, false)?;
+        self.process_request(request, false)?;
         self.delivery_sender.send(Some(request.clone())).map_err(|_| ShopError::ErrorCannotDeliverPackage)?;
         
         Ok(())
@@ -157,11 +157,13 @@ impl Handler<Request> for Shop{
     fn handle(&mut self, _msg: Request , _ctx: &mut Context<Self>) -> Self::Result {
         if self.is_physical_request(&_msg){
             print("Received Physical Request".to_string());
-            self.process_request(&_msg, true).map_err(|error| MessageError::ShopError(error));
+            let res = self.process_request(&_msg, true).map_err(MessageError::ShopError);
+            //WIP printear si es error
             
-        } else if let Err(error) = self.handle_online_request(&_msg){
+        } else if let Err(_error) = self.handle_online_request(&_msg){
             if let Some(ecommerce_addr) = &self.ecomerce_addr{
-                ecommerce_addr.try_send(CantHandleRequestMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce));
+                let res = ecommerce_addr.try_send(CantHandleRequestMsg::new(_msg)).map_err(|_| MessageError::ShopError(ShopError::ErrorCantCommunicateWithEcommerce));
+                print(format!("{:?}",res)); //WIP printear si es error
             }
         };
     }
@@ -172,7 +174,7 @@ impl Handler<FinishedDelivery> for Shop{
 
     /// Implementation for the FinishedDelivery message. Used to handle the delivery of an online
     /// order.
-    fn handle(&mut self, msg: FinishedDelivery, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FinishedDelivery, _ctx: &mut Self::Context) -> Self::Result {
         self.handled_finished_delivery(msg)
     }
 }
@@ -273,16 +275,17 @@ mod test {
     }
 
     #[test]
-    fn shop_test_3_can_reduce_stock(){
+    fn shop_test_3_can_reduce_stock()-> Result<(), ShopError>{
         let mut shop = create_test_shop();
         let request = Request::new( vec![1,2,3], vec![2,4,2], Point::new(0,0));
-        shop.process_request(&request, true);
+        shop.process_request(&request, true)?;
         let remaind_of_product_1 = shop.stock[&1];
         let remaind_of_product_2 = shop.stock[&2];
         let remaind_of_product_3 = shop.stock[&3];
         assert_eq!(remaind_of_product_1, (3,0));
         assert_eq!(remaind_of_product_2, (0,0));
         assert_eq!(remaind_of_product_3, (4,0));
+        Ok(())
     }
     
     #[test]
@@ -315,11 +318,12 @@ mod test {
     }
     
     #[test]
-    fn shop_test_6_sends_requests_to_deliver(){
+    fn shop_test_6_sends_requests_to_deliver()-> Result<(), ShopError>{
         let (tx, rx) = std::sync::mpsc::channel();
         let mut shop = Shop::from("test_files/shop_test_1.txt".to_string(), tx).unwrap();
         let request = Request::new( vec![1,2,3], vec![2,4,2], Point::new(0,0));
-        shop.handle_online_request(&request);
-        assert_eq!(request, rx.recv().unwrap().unwrap())
+        shop.handle_online_request(&request)?;
+        assert_eq!(request, rx.recv().unwrap().unwrap());
+        Ok(())
     }
 }

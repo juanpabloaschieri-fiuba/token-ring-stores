@@ -1,32 +1,24 @@
-use actix_rt::time::sleep;
-use rand::{SeedableRng, Rng};
 use shop::delivery::DeliveryHandler;
 use shop::ecomerce::Ecommerce;
-use shop::request_simulator::{Simulator, simulate};
+use shop::request_simulator::Simulator;
 use shop::shop::ShopError;
 use shop::token_ring::{TokenRing, TokenRingError};
-use shop::token_ring_messages::SetConnectionStatus;
 use shop::{shop::Shop, point::Point};
 use shop::messages::EcommerceAddrMsg;
-use tokio::net::UdpSocket;
 use std::collections::VecDeque;
-use std::io::BufRead;
 use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
-use std::thread;
-use std::time::Duration;
-use actix::{Actor, Addr,System, MailboxError};
+use actix::{Actor, Addr,System};
 use std::sync::mpsc;
 use tokio::io::{self, BufReader, AsyncBufReadExt};
 use colored::*;
 
-const SEED : u64 = 43;
 const PORT : u16 = 10000;
 
 #[derive(Debug)]
 enum Error{
-    ShopError(ShopError),
-    TokenRingError(TokenRingError),
+    Shop(ShopError),
+    TokenRing(TokenRingError),
     ErrorInitializingEcommerce,
     ErrorJoiningThreads
 }
@@ -54,7 +46,7 @@ async fn initialize(n: u16, node_addr: SocketAddr, ring_node_addr: Option<Socket
 
     let (tx_delivery,rx_delivery) = mpsc::channel();
     let (tx_ring_messages,rx_ring_messages) = mpsc::channel();
-    let shop = Shop::from(stock_file_name.to_string(), tx_delivery.clone()).map_err(|error| Error::ShopError(error))?;
+    let shop = Shop::from(stock_file_name.to_string(), tx_delivery.clone()).map_err(Error::Shop)?;
     let (shop_location, shop_addr) = (shop.location, shop.start());
         
     let ecommerce_addr: Addr<Ecommerce> = Ecommerce::new(shop_addr.clone(), tx_ring_messages.clone()).start();
@@ -62,7 +54,7 @@ async fn initialize(n: u16, node_addr: SocketAddr, ring_node_addr: Option<Socket
     
     let delivery_handler = DeliveryHandler::new(shop_addr.clone(), rx_delivery, tx_delivery, shop_location);
     
-    let tr = TokenRing::new(node_addr, ring_node_addr, ecommerce_addr, tx_ring_messages, rx_ring_messages).map_err(|error| Error::TokenRingError(error))?;
+    let tr = TokenRing::new(node_addr, ring_node_addr, ecommerce_addr, tx_ring_messages, rx_ring_messages).map_err( Error::TokenRing)?;
 
     Ok((tr, delivery_handler, shop_addr, shop_location))
 }
@@ -73,13 +65,14 @@ fn handle_connect_command(mut words: VecDeque<&str>, tr: &TokenRing)->Result<(),
             match SocketAddr::from_str(second_word){
                 Ok(addr) => tr.connect(Some(addr)),
                 Err(_) => {
-                    Ok(print("Invalid addr, not connecting".to_string()))
+                    print("Invalid addr, not connecting".to_string());
+                    Ok(())
                 }
             }
         },
         None => tr.connect(None),
     };
-    res.map_err(|error| Error::TokenRingError(error))
+    res.map_err(Error::TokenRing)
 }
 
 fn start_simulator(simulator: Option<Simulator> ,n: u16, shop_addr: &Addr<Shop>, shop_location:Point, node_addr: SocketAddr)->Simulator{
@@ -105,14 +98,14 @@ async fn receive_commands(tr: &TokenRing, n:u16, shop_addr: Addr<Shop>, shop_loc
     let mut simulator = None;
     let mut lines = BufReader::new(stdin).lines();
     while let Ok(Some(line)) = lines.next_line().await{
-        let mut words: VecDeque<&str> = line.trim().split(" ").collect();
+        let mut words: VecDeque<&str> = line.trim().split(' ').collect();
         if let Some(first_word) = words.pop_front(){
-            let res = match first_word {
+            match first_word {            
                 "exit" => break,
                 "simulate" => simulator = Some(start_simulator(simulator, n, &shop_addr, shop_location, node_addr)),
+                "disconnect" => tr.disconnect().map_err(Error::TokenRing)?,
+                "connect" => handle_connect_command(words, tr)?,
                 "topology" => tr.print_topology().map_err(Error::TokenRingError)?,
-                "disconnect" => tr.disconnect().map_err(|error| Error::TokenRingError(error))?,
-                "connect" => handle_connect_command(words, &tr)?,
                 _ => continue,
             };
         }

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
-use actix::{Actor, Context, Handler, System, Addr, Message, WrapFuture, AsyncContext};
+use actix::{Actor, Context, Handler, Addr};
 use crate::shop::Shop;
-use crate::messages::{Request, StockAvailabilityMsg, CantHandleRequestMsg, EnoughStockMsg, MessageError};
-use crate::token_ring_messages::{RingMessage, CoordinateRequest, MsgId};
+use crate::messages::{Request, StockAvailabilityMsg, CantHandleRequestMsg, EnoughStockMsg};
+use crate::token_ring_messages::{RingMessage, CoordinateRequest};
 use colored::*;
 
 /// Struct that represents an ecommerce
@@ -40,18 +40,19 @@ impl Ecommerce{
     fn continue_coordinated_request(&mut self,req_id: usize, distance: i32){
         if let Some(mut msg) = self.ongoing_coordinate_requests.remove(&req_id){
             msg.distances.push(distance);
-            self.message_sender.send(RingMessage::from_coordinate_request(msg));
+            print(format!("Sending {:?}", msg));
+            let _ = self.message_sender.send(RingMessage::from_coordinate_request(msg));
         } 
     }
 
     /// Starts a new coordinate request given the request and the distance to the next node
     fn start_new_coordinate_request(&self, request:Request, my_distance: i32){
-        let amount_of_diferent_products =  request.amount_of_diferent_products() as u8;
+        let amount_of_diferent_products =  request.amount_of_diferent_products();
         let mut recoordinate = CoordinateRequest::start(u16::MAX, request, amount_of_diferent_products);
         recoordinate.distances.push(my_distance);
         let recoordinate_ring = RingMessage::from_coordinate_request(recoordinate);
 
-        self.message_sender.send(recoordinate_ring);
+        let _ =self.message_sender.send(recoordinate_ring);
     }
 
     /// Adds an ongoing coordinate request
@@ -67,8 +68,7 @@ impl Handler<Request> for Ecommerce{
     /// Handles a Request message
     fn handle(&mut self, _msg:Request , _ctx: &mut Context<Self>) -> Self::Result {
         print(format!("Taking care of {}", _msg));
-        self.shop_addr.try_send(_msg).map_err(|_| MessageError::EcommerceError(EcommerceError::ErrorCantCommunicateWithShop));
-        
+        self.shop_addr.do_send(_msg);
     }
 }
 
@@ -99,9 +99,9 @@ impl Handler<CoordinateRequest> for Ecommerce{
     type Result = ();
     
     /// Handles a CoordinateRequest message
-    fn handle(&mut self, msg: CoordinateRequest, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: CoordinateRequest, _ctx: &mut Self::Context) -> Self::Result {
         print(format!("Coordinating {}", msg.request));
-        self.shop_addr.try_send(EnoughStockMsg::new(msg.request.clone(), self.next_id)); //WIP el error dios nos ayude, capas pasarlo a un do
+        self.shop_addr.do_send(EnoughStockMsg::new(msg.request.clone(), self.next_id)); //WIP el error dios nos ayude, capas pasarlo a un do
         self.add_ongoing_coordinate_request(msg);
     }
 }
@@ -121,7 +121,7 @@ pub enum EcommerceError{
 mod test {
     use std::sync::mpsc::{self, Receiver};
 
-    use crate::point::Point;
+    use crate::{point::Point, token_ring_messages::MsgId};
 
     use super::*;
     
