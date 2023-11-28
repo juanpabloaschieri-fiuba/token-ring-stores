@@ -1255,31 +1255,4 @@ pub mod test {
 
         Ok(())
     }
-
-    /*#[ test]
-    fn test_20_connect_to_existant_token_ring() -> Result<(), TokenRingError>{
-        let (mut tr_sender,  _msg_sender) = create_token_ring_sender(1, 30000);
-        tr_sender.connected = false;
-        tr_sender.reset_node()?;
-        let socket = UdpSocket::bind("127.0.0.1:30001").unwrap();
-        socket.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
-        let msg = SetConnectionStatus::new(true, Some(SocketAddr::from_str("127.0.0.1:30001").unwrap()));
-        tr_sender.process_msg(RingMessage::from_set_connection_status(msg))?;
-
-        let addr1 = SocketAddr::from_str("127.0.0.1:30001").unwrap();
-        let node_addr = SocketAddr::from_str("127.0.0.1:30000").unwrap();
-        let aux_msg = RingMessage::from_node_connection( NodeConnection::new(MsgId::new(1,2), vec![u16::MAX,1], 2, node_addr, VecDeque::from([1,2]), vec![addr1, node_addr] ));
-        tr_sender.process_msg(aux_msg)?;
-
-
-        assert!(tr_sender.connected);
-        assert_eq!(tr_sender.message_window.next_peer, SocketAddr::from_str("127.0.0.1:30001").unwrap());
-
-        let (received_bytes_msg,_) = receive_udp_package_from(&socket).unwrap();
-        let received_msg = RingMessage::from_bytes(&received_bytes_msg)?;
-        assert_eq!(received_msg.header.msg_type, RingMessageType::NodeConnection);
-        assert!(!receive_udp_package_from(&socket).is_err());
-
-        Ok( ())
-    } */
 }
