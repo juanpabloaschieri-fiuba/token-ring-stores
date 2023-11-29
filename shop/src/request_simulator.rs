@@ -14,9 +14,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
-///13 //tiempo hasta pedido
-///ida,5;idb7,8;
-///
+
 const PHYSICAL_REQUEST_RATIO: f32 = 0.0;
 const PORT: u16 = 20000;
 
@@ -275,15 +273,15 @@ mod test {
 
     fn get_requests() -> (SimulatedRequest, SimulatedRequest) {
         let p1 = SimulatedRequest::new(
-            Duration::from_secs(2),
+            Duration::from_secs(3),
             Vec::from([1, 2]),
             Vec::from([2, 1]),
             Point::new(0, 0),
         );
         let p2 = SimulatedRequest::new(
-            Duration::from_secs(3),
-            Vec::from([1, 3]),
-            Vec::from([1, 1]),
+            Duration::from_secs(15),
+            Vec::from([1, 2]),
+            Vec::from([2, 1]),
             Point::new(0, 0),
         );
         (p1, p2)
@@ -291,7 +289,7 @@ mod test {
 
     #[tokio::test]
     async fn test_1_read_request() {
-        let path = String::from("test_files/requests_test_1.txt");
+        let path = String::from("test_files/simulation_test_1.txt");
         let file = File::open(path).unwrap();
         let mut reader = BufReader::new(file);
         let request1 = read_request(&mut reader, Point::new(0, 0)).unwrap();

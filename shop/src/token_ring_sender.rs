@@ -9,7 +9,7 @@ use crate::token_ring::*;
 use crate::token_ring_messages::*;
 
 const WINDOW_SIZE: u8 = 15;
-const PEER_TIMEOUT_MS: i64 = 1000;
+const PEER_TIMEOUT_MS: i64 = 500;
 const MAX_PEER_TIMEOUT: u8 = 4;
 
 /// Struct that represents the Token Ring Sender to send messages in the Token Ring.
@@ -106,7 +106,7 @@ impl TokenRingSender {
         };
         self.final_times_created_messages
             .push_back(FinalTime::from_timeout(
-                PEER_TIMEOUT_MS * nodes_in_ring * 3,
+                PEER_TIMEOUT_MS * nodes_in_ring * (MAX_PEER_TIMEOUT as i64),
                 msg.header.id,
             ));
         self.created_messages.insert(msg.header.id, msg)?;
