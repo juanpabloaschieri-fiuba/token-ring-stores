@@ -174,7 +174,7 @@ Si un mensaje se quiere mandar cuando la ventana esta llena, se lo guarda en una
 El `TokenRingSender` recibe los mensajes sobre el receiver end del channel que lo comunica con el `TokenRingReceiver`, leyendo con un timeout especifico (el menor entre todos los mensajes que fueron mandados). Dependiendo de si el mensaje dio toda la vuelta al Token Ring o no, se lo manda a la ventana para que sea enviado o se encola a la espera de que se libere un lugar en la ventana.
 
 # Relacion entre los componentes
-![Asi se ven las principales entidades del programa](./img/diagrama_estructuras.drawio.png)  
+![Asi se ven las principales entidades del programa](./img/diagrama_estructuras.png)  
   
 En el thread principal, se inician todas las entidades correspondientes para un Shop (actores y su nodo del Token Ring), y luego se queda esperando por terminal a que el usuario ejecute los comandos correspondientes. Luego de que se quiera terminar la ejecucion, se terminan los threads corespondientes al `TokenRingReceiver` y al `TokenRingSender`, se termina el delivery, la simulacion y se matan a los actores del Shop y del E-Commerce.
 
